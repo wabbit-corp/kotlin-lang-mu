@@ -31,11 +31,11 @@ publishing {
 
 dependencies {
     implementation("com.github.wabbit-corp:kotlin-math-rational:1.1.0")
-    implementation("com.github.wabbit-corp:kotlin-data:1.1.0")
+    implementation("com.github.wabbit-corp:kotlin-data:1.2.0")
     implementation("com.github.wabbit-corp:kotlin-extra-serializers:1.1.0")
     implementation("com.github.wabbit-corp:kotlin-parsing-charinput:1.1.0")
     implementation("com.github.wabbit-corp:kotlin-levenshtein:1.0.1")
-    testImplementation("com.github.wabbit-corp:kotlin-random-gen:1.1.0")
+    testImplementation("com.github.wabbit-corp:kotlin-random-gen:1.2.0")
 
     testImplementation(kotlin("test"))
 
