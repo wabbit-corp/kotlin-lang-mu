@@ -1,4 +1,4 @@
-package one.wabbit.lang.mu.std
+package one.wabbit.mu.types
 
 import kotlin.reflect.KClass
 import kotlin.reflect.KType
@@ -30,30 +30,7 @@ sealed interface MuType {
             }
         }
 
-        override fun toString(): String {
-            val head = TYPE_REWRITES[head] ?: RewrittenName.Name(head)
-
-            when (head) {
-                is RewrittenName.Name -> {
-                    if (args.isEmpty()) return head.name
-                    else return "${head.name}[${args.joinToString(", ")}]"
-                }
-                is RewrittenName.Infix -> {
-                    check(args.size == 2) { "Expected 2 arguments for operator: $head" }
-                    return "(${args[0]} ${head.name} ${args[1]})"
-                }
-                is RewrittenName.Postfix -> {
-                    check(args.size == 1) { "Expected 1 argument for operator: $head" }
-                    return "${args[0]}${head.name}"
-                }
-                is RewrittenName.Prefix -> {
-                    check(args.size == 1) { "Expected 1 argument for operator: $head" }
-                    return "${head.name}${args[0]}"
-                }
-            }
-        }
-
-        override fun subst(v: Subst): MuType.Constructor =
+        override fun subst(v: Subst): Constructor =
             Constructor(head, args.map { it.subst(v) })
     }
     data class Forall(val vars: List<TypeVariable>, val tpe: MuType) : MuType {
@@ -61,9 +38,8 @@ sealed interface MuType {
             require(vars.isNotEmpty())
             require(vars.distinct().size == vars.size)
         }
-        override fun toString(): String = "forall ${vars.joinToString(", ")}. $tpe"
 
-        override fun subst(v: Subst): MuType.Forall =
+        override fun subst(v: Subst): Forall =
             Forall(vars, tpe.subst(v - vars.toSet()))
     }
     data class Exists(val vars: List<TypeVariable>, val tpe: MuType) : MuType {
@@ -71,15 +47,12 @@ sealed interface MuType {
             require(vars.isNotEmpty())
             require(vars.distinct().size == vars.size)
         }
-        override fun toString(): String = "exists ${vars.joinToString(", ")}. $tpe"
 
-        override fun subst(v: Subst): MuType.Exists =
+        override fun subst(v: Subst): Exists =
             Exists(vars, tpe.subst(v - vars.toSet()))
     }
 
     data class Use(val name: TypeVariable) : MuType {
-        override fun toString(): String = "&$name"
-
         override fun subst(v: Subst): MuType {
             val r = v[name]
             if (r == null) return this
@@ -87,15 +60,7 @@ sealed interface MuType {
         }
     }
     data class Func(val typeParameters: List<TypeVariable>, val parameters: List<MuType>, val returnType: MuType) : MuType {
-        override fun toString(): String {
-            if (typeParameters.isEmpty()) {
-                return "(${parameters.joinToString(", ")}) -> $returnType"
-            } else {
-                return "[${typeParameters.joinToString(", ")}] (${parameters.joinToString(", ")}) -> $returnType"
-            }
-        }
-
-        override fun subst(v: Subst): MuType.Func {
+        override fun subst(v: Subst): Func {
             val v1 = v - typeParameters.toSet()
             return Func(typeParameters, parameters.map { it.subst(v1) }, returnType.subst(v1))
         }
@@ -104,6 +69,16 @@ sealed interface MuType {
     abstract fun subst(v: Subst): MuType
     fun subst(v: Map<TypeVariable, MuType>): MuType = subst(Subst { v[it] })
     fun subst(v: MutableEqLattice<TypeVariable, MuType>): MuType = subst(Subst { v[it] })
+
+    fun nullable(): MuType = when (this) {
+        is Constructor ->
+            if (head == "?") this
+            else Constructor("?", listOf(this))
+        is Use -> Constructor("?", listOf(this))
+        is Func -> Constructor("?", listOf(this))
+        is Forall -> Forall(vars, tpe.nullable())
+        is Exists -> Exists(vars, tpe.nullable())
+    }
 
     fun isKnownNullable(): Boolean = when (this) {
         is Constructor -> head == "?"
@@ -122,6 +97,13 @@ sealed interface MuType {
     }
 
     companion object {
+        sealed interface RewrittenName {
+            data class Postfix(val name: String): RewrittenName
+            data class Infix(val name: String): RewrittenName
+            data class Prefix(val name: String): RewrittenName
+            data class Name(val name: String): RewrittenName
+        }
+
         val Nothing: MuType = Constructor("kotlin.Nothing", emptyList())
         val BigInteger: MuType = Constructor("java.math.BigInteger", emptyList())
         val String: MuType = Constructor("kotlin.String", emptyList())
@@ -129,6 +111,7 @@ sealed interface MuType {
         val Double: MuType = Constructor("kotlin.Double", emptyList())
         val Boolean: MuType = Constructor("kotlin.Boolean", emptyList())
         val Unit: MuType = Constructor("kotlin.Unit", emptyList())
+        val Rational: MuType = Constructor("one.wabbit.math.Rational", emptyList())
         fun List(tpe: MuType): MuType = Constructor("kotlin.collections.List", listOf(tpe))
         fun Set(tpe: MuType): MuType = Constructor("kotlin.collections.Set", listOf(tpe))
         fun Map(key: MuType, value: MuType): MuType = Constructor("kotlin.collections.Map", listOf(key, value))
@@ -158,7 +141,7 @@ sealed interface MuType {
                             else {
                                 val tv = state.freshVar()
                                 existentials.add(tv)
-                                MuType.Use(tv)
+                                Use(tv)
                             }
                         })
                     } else {
@@ -200,37 +183,3 @@ data class Subst(val run: (TypeVariable) -> MuType?) {
     operator fun minus(v: TypeVariable): Subst = Subst { v1 -> if (v1 == v) null else this[v1] }
     operator fun minus(vs: Set<TypeVariable>): Subst = Subst { v1 -> if (v1 in vs) null else this[v1] }
 }
-
-sealed interface RewrittenName {
-    data class Postfix(val name: String): RewrittenName
-    data class Infix(val name: String): RewrittenName
-    data class Prefix(val name: String): RewrittenName
-    data class Name(val name: String): RewrittenName
-}
-
-val TYPE_REWRITES = mapOf(
-    "one.wabbit.lang.mu.std.MuLiteralInt" to RewrittenName.Name("LitInt"),
-
-    // bottom unicode symbol
-    "kotlin.Nothing" to RewrittenName.Name("⊥"),
-    "java.lang.Void" to RewrittenName.Name("⊥"),
-
-    // top unicode symbol
-    "kotlin.Any" to RewrittenName.Name("⊤"),
-
-    "kotlin.Int" to RewrittenName.Name("Int"),
-    "kotlin.Double" to RewrittenName.Name("Double"),
-    "kotlin.String" to RewrittenName.Name("String"),
-    "kotlin.Boolean" to RewrittenName.Name("Boolean"),
-    "kotlin.Unit" to RewrittenName.Name("Unit"),
-    "java.math.BigInteger" to RewrittenName.Name("BigInteger"),
-    "kotlin.collections.List" to RewrittenName.Name("List"),
-    "kotlin.collections.Set" to RewrittenName.Name("Set"),
-    "kotlin.collections.Map" to RewrittenName.Name("Map"),
-
-    "one.wabbit.lang.mu.std.Upcast" to RewrittenName.Infix("<:<"),
-    "std.data.Union2" to RewrittenName.Infix("|"),
-    "std.base.Rational" to RewrittenName.Name("Rational"),
-
-    "?" to RewrittenName.Postfix("?"),
-)

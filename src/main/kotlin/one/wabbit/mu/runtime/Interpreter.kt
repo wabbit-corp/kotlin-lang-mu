@@ -1,7 +1,10 @@
-package one.wabbit.lang.mu
+package one.wabbit.mu.runtime
 
 import one.wabbit.math.Rational
 import one.wabbit.data.*
+import one.wabbit.mu.MuException
+import one.wabbit.mu.ast.MuExpr
+import one.wabbit.mu.parser.MuParser
 import java.math.BigInteger
 
 fun capturedVars(expr: MuExpr): Set<String> {
@@ -113,7 +116,7 @@ fun <Context, Value> evaluateMu(context: Context, expr: MuExpr, tc: InterpreterC
                     }
                 )
             } catch(e: UnknownArgumentException) {
-                throw MuException("unknown argument: ${e.name} when matching arguments to ${unevaluatedHead}", e)
+                throw MuException("unknown argument: ${e.names} when matching arguments to ${unevaluatedHead}", e)
             }
 
             val argValues = mutableMapOf<String, Value>()

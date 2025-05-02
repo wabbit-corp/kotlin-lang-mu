@@ -1,6 +1,5 @@
-package one.wabbit.lang.mu
+package one.wabbit.mu.types
 
-import one.wabbit.lang.mu.std.MutableEqLattice
 import java.lang.Math.pow
 import kotlin.math.roundToInt
 import kotlin.test.*

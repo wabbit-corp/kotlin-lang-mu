@@ -11,9 +11,9 @@ group   = "one.wabbit"
 version = "2.1.0"
 
 plugins {
-    kotlin("jvm") version "2.0.20"
+    kotlin("jvm") version "2.1.20"
 
-    kotlin("plugin.serialization") version "2.0.20"
+    kotlin("plugin.serialization") version "2.1.20"
 
     id("maven-publish")
 }
@@ -32,9 +32,9 @@ publishing {
 dependencies {
     implementation("com.github.wabbit-corp:kotlin-math-rational:1.2.0")
     implementation("com.github.wabbit-corp:kotlin-data:1.2.0")
-    implementation("com.github.wabbit-corp:kotlin-extra-serializers:1.2.0")
-    implementation("com.github.wabbit-corp:kotlin-parsing-charinput:1.1.0")
-    implementation("com.github.wabbit-corp:kotlin-levenshtein:1.0.1")
+    implementation("com.github.wabbit-corp:kotlin-extra-serializers:2.0.0")
+    implementation("com.github.wabbit-corp:kotlin-parsing-charinput:1.2.0")
+    implementation("com.github.wabbit-corp:kotlin-levenshtein:1.1.0")
     testImplementation("com.github.wabbit-corp:kotlin-random-gen:1.3.0")
 
     testImplementation(kotlin("test"))
@@ -42,7 +42,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.8.0")
 
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.0")
-    implementation("org.jetbrains.kotlin:kotlin-reflect:2.0.20")
+    implementation("org.jetbrains.kotlin:kotlin-reflect:2.1.20")
     implementation("org.jetbrains.kotlinx:kotlinx-collections-immutable:0.3.8")
 }
 

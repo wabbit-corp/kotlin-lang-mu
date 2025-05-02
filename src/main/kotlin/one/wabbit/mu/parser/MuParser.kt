@@ -1,4 +1,4 @@
-package one.wabbit.lang.mu
+package one.wabbit.mu.parser
 
 import one.wabbit.math.Rational
 import one.wabbit.parsing.CharInput

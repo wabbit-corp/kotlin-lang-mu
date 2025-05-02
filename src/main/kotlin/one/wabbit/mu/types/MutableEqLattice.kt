@@ -1,4 +1,4 @@
-package one.wabbit.lang.mu.std
+package one.wabbit.mu.types
 
 class MutableEqLattice<From, To> private constructor(
     private val e2c: MutableMap<From, Int>,

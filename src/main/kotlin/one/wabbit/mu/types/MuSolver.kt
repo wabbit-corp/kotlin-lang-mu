@@ -1,30 +1,8 @@
-package one.wabbit.lang.mu.std
+package one.wabbit.mu.types
 
-import one.wabbit.lang.mu.std.MuType.Use
+import one.wabbit.mu.types.MuType.Use
 import org.slf4j.LoggerFactory
 import java.util.*
-
-data class Instance<V>(
-    val typeParameters: List<TypeVariable>,
-    val parameters: List<MuType.Constructor>,
-    val returnType: MuType.Constructor,
-    val get: (List<V>) -> V,
-) {
-    override fun toString(): String {
-        return buildString {
-            if (typeParameters.isNotEmpty()) {
-                append("∀ ")
-                append(typeParameters.joinToString(", "))
-                append(". ")
-            }
-            if (parameters.isNotEmpty()) {
-                append(parameters.joinToString(", "))
-                append(" -> ")
-            }
-            append(returnType)
-        }
-    }
-}
 
 private val UnificationLogger = LoggerFactory.getLogger("Typing.Unification")
 private val ResolutionLogger = LoggerFactory.getLogger("Typing.Resolution")
@@ -45,10 +23,12 @@ class TyperState<Value>(
 
     // Unicode Greek Alphabet: αβγδεζηθικλμνξοπρστυφχψω
 
-    fun freshVar(): TypeVariable = TypeVariable("ξ${nextVar++}")
+    fun freshVar(): TypeVariable =
+        TypeVariable("ξ${nextVar++}")
     fun TypeVariable.isVariable(): Boolean = name.startsWith("ξ")
 
-    fun freshExistentialVar(): TypeVariable = TypeVariable("φ${nextVar++}")
+    fun freshExistentialVar(): TypeVariable =
+        TypeVariable("φ${nextVar++}")
     fun TypeVariable.isExistential(): Boolean = name.startsWith("φ")
 
     /**
@@ -79,7 +59,7 @@ class TyperState<Value>(
                 when (b) {
                     is MuType.Constructor -> unifyS(a, b)
                     is MuType.Forall -> unifyS(b, a)
-                    is MuType.Use -> unifyS(b, a)
+                    is Use -> unifyS(b, a)
                     is MuType.Func -> unifyS(b, a)
                     is MuType.Exists -> unifyS(b, a)
                 }
@@ -89,7 +69,7 @@ class TyperState<Value>(
                     is MuType.Constructor -> unifyS(a, b)
                     is MuType.Forall -> unifyS(a, b)
                     is MuType.Exists -> unifyS(a, b)
-                    is MuType.Use -> unifyS(a, b)
+                    is Use -> unifyS(a, b)
                     is MuType.Func -> unifyS(a, b)
                 }
             }
@@ -98,16 +78,16 @@ class TyperState<Value>(
                     is MuType.Constructor -> unifyS(a, b)
                     is MuType.Forall -> unifyS(a, b)
                     is MuType.Exists -> unifyS(a, b)
-                    is MuType.Use -> unifyS(a, b)
+                    is Use -> unifyS(a, b)
                     is MuType.Func -> unifyS(a, b)
                 }
             }
-            is MuType.Use -> {
+            is Use -> {
                 when (b) {
                     is MuType.Constructor -> unifyS(a, b)
                     is MuType.Forall -> unifyS(a, b)
                     is MuType.Exists -> unifyS(a, b)
-                    is MuType.Use -> unifyS(a, b)
+                    is Use -> unifyS(a, b)
                     is MuType.Func -> unifyS(a, b)
                 }
             }
@@ -116,7 +96,7 @@ class TyperState<Value>(
                     is MuType.Constructor -> unifyS(a, b)
                     is MuType.Forall -> unifyS(a, b)
                     is MuType.Exists -> unifyS(a, b)
-                    is MuType.Use -> unifyS(a, b)
+                    is Use -> unifyS(a, b)
                     is MuType.Func -> unifyS(a, b)
                 }
             }
@@ -131,7 +111,7 @@ class TyperState<Value>(
      * On its own, `Show<R>` may have many different instances, but when combined with `Convert<Int, R>`,
      * the number of possible instances is reduced (ideally to one).
      */
-    fun resolve(typeclasses: List<MuType.Constructor>): Pair<TyperState<Value>, List<Value>> {
+    fun resolve(typeclasses: List<MuType.Constructor>, maxIterations: Int = 300): Pair<TyperState<Value>, List<Value>> {
         if (typeclasses.isEmpty()) {
             return this to emptyList()
         }
@@ -172,7 +152,7 @@ class TyperState<Value>(
         var iterations = 0
         queue.add(State(0, typeclasses.map { makeGoal(it) }, this, emptyMap()))
 
-        while (queue.isNotEmpty() && iterations < 300) {
+        while (queue.isNotEmpty() && iterations < maxIterations) {
             iterations += 1
             val (depth, goals, state, accumulated) = queue.poll()
             val prefix = "  ".repeat(depth + 1)
@@ -267,7 +247,17 @@ class TyperState<Value>(
 //            println(s)
 //        }
 
-        throw IllegalArgumentException("No solution found for $typeclasses")
+        // If queue is empty and no solution was found
+        if (iterations >= maxIterations) {
+            ResolutionLogger.error("Instance resolution exceeded max iterations ($maxIterations) for goals: $typeclasses")
+        } else {
+            ResolutionLogger.error("Instance resolution failed for goals: $typeclasses")
+        }
+
+        // We need to know which goal failed. This requires more sophisticated tracking
+        // or analyzing the remaining states in the queue if it wasn't empty.
+        // For now, throw a general error.
+        throw InstanceNotFoundException(typeclasses.first()) // Report failure on the first goal as a starting point
     }
 
     internal fun unifyS(a: MuType.Constructor, b: MuType.Constructor) {
@@ -291,12 +281,12 @@ class TyperState<Value>(
         val t = a.tpe.subst(aS)
         unify(b, t)
     }
-    internal fun unifyS(a: MuType.Use, b: MuType) {
+    internal fun unifyS(a: Use, b: MuType) {
         val t = lattice[a.name]
         if (t != null) {
             unify(t, b)
         } else {
-            if (b is MuType.Use) {
+            if (b is Use) {
                 lattice.join(a.name, b.name)
             } else {
                 lattice[a.name] = b

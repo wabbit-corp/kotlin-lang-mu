@@ -1,12 +1,13 @@
-package one.wabbit.lang.mu.std
+package one.wabbit.mu.runtime
 
 import kotlinx.collections.immutable.*
-import one.wabbit.lang.mu.*
 import one.wabbit.levenshtein.levenshtein
 import one.wabbit.math.Rational
 import one.wabbit.data.Either
 import one.wabbit.data.Left
 import one.wabbit.data.Right
+import one.wabbit.mu.ast.MuExpr
+import one.wabbit.mu.types.*
 import java.io.File
 import java.lang.reflect.InvocationTargetException
 import java.math.BigInteger
@@ -116,7 +117,7 @@ internal fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: 
     when (member) {
         is KMutableProperty -> {
             val propertyType = MuType.fromKType(member.returnType)
-            val args = listOf(Arg<MuStdValue>("value", false, ArgArity.Optional, propertyType))
+            val args = listOf(Arg<MuStdValue>("value", false, ArgArity.Optional, propertyType.nullable()))
 
             member.isAccessible = true
             return MuStdValue.func(
@@ -131,11 +132,18 @@ internal fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: 
                     return@func ctx to MuStdValue.unsafeLift(oldValue, propertyType)
                 }
 
-                val state = TyperState<MuStdValue>(ctx.instances)
+                val state = one.wabbit.mu.types.TyperState<MuStdValue>(ctx.instances)
                 try {
                     state.unify(propertyType, value.type)
                 } catch (e: Throwable) {
-                    val (_, r) = state.resolve(listOf(MuType.Constructor("one.wabbit.lang.mu.std.Upcast", listOf(value.type, propertyType))))
+                    val (_, r) = state.resolve(
+                        listOf(
+                            MuType.Constructor(
+                                Upcast.TypeName,
+                                listOf(value.type, propertyType)
+                            )
+                        )
+                    )
 
                     @Suppress("UNCHECKED_CAST")
                     val upcast = r[0].unsafeValue as Upcast<Any?, Any?>
@@ -229,7 +237,8 @@ internal fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: 
                 check(resultType is MuType.Constructor)
                 check(resultType.head == "kotlin.Pair")
                 check(resultType.args.size == 2)
-                check(resultType.args[0] == MuType.Constructor("one.wabbit.lang.mu.std.MuStdContext", emptyList()))
+                println(MuStdContext.TypeName)
+                check(resultType.args[0] == MuType.Constructor(MuStdContext.TypeName, emptyList()))
                 resultType = resultType.args[1]
             }
 
@@ -242,7 +251,7 @@ internal fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: 
             ) { ctx, argMap ->
                 val args = mutableListOf<MuStdValue?>()
                 parameters.mapTo(args) { argMap[it.name] }
-                val state = TyperState<MuStdValue>(ctx.instances)
+                val state = one.wabbit.mu.types.TyperState<MuStdValue>(ctx.instances)
 
                 for (i in 0 until args.size) {
                     val arg = args[i]
@@ -259,7 +268,7 @@ internal fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: 
                                 val (_, r) = state.resolve(
                                     listOf(
                                         MuType.Constructor(
-                                            "one.wabbit.lang.mu.std.Upcast",
+                                            Upcast.TypeName,
                                             listOf(arg.type, parameters[i].type)
                                         )
                                     )
@@ -340,6 +349,8 @@ data class MuStdContext(
     fun newScope(file: File? = null): MuStdContext = this.copy(scope = MuStdScope(scope, file, persistentSetOf(), persistentMapOf()))
     fun popScope(): MuStdContext = this.copy(scope = scope.parentScope ?: scope)
 
+    fun withScope(scope: MuStdScope): MuStdContext = this.copy(scope = scope)
+
     fun currentFile(): File? {
         var scope = this.scope
         while (true) {
@@ -363,6 +374,13 @@ data class MuStdContext(
     fun withOpenModule(moduleName: String): MuStdContext =
         this.copy(scope = scope.copy(openModules = scope.openModules.add(moduleName)))
 
+    fun withModule(moduleName: String, module: MuStdModule): MuStdContext =
+        this.copy(modules = modules.put(moduleName, module))
+    fun withModule(moduleName: String, definitions: Map<String, MuStdValue>): MuStdContext =
+        this.copy(modules = modules.put(moduleName, MuStdModule(persistentMapOf(*definitions.toList().toTypedArray()))))
+    fun withModule(moduleName: String, vararg definitions: Pair<String, MuStdValue>): MuStdContext =
+        this.copy(modules = modules.put(moduleName, MuStdModule(persistentMapOf(*definitions.toList().toTypedArray()))))
+
     fun withNativeModule(moduleName: String, jvmModuleRef: Any): MuStdContext {
         var definitions = persistentMapOf<String, MuStdValue>()
         var newInstances = instances
@@ -383,6 +401,9 @@ data class MuStdContext(
             if (exportAnnotation != null) {
                 val exportName = exportAnnotation.name.ifEmpty { member.name }
                 check(exportName != "") { "Empty export name on $member" }
+                require(!definitions.containsKey(exportName)) {
+                    "Duplicate export name '$exportName' detected in module '$moduleName' for member $member"
+                }
                 definitions = definitions.put(exportName, makeValueFromMember(jvmModuleRef, exportName, member))
             }
 
@@ -438,6 +459,8 @@ data class MuStdContext(
     }
 
     companion object : InterpreterContext<MuStdContext, MuStdValue> {
+        val TypeName = MuStdContext::class.qualifiedName!!
+
         override fun liftInteger(context: MuStdContext, value: BigInteger): MuStdValue =
             MuStdValue.lift(MuLiteralInt(value))
         override fun liftDouble(context: MuStdContext, value: Double): MuStdValue = MuStdValue.lift(value)
@@ -456,10 +479,10 @@ data class MuStdContext(
                 return MuStdValue.unsafeLift(value.map { it.unsafeValue }, MuType.List(type))
             }
 
-            val state = TyperState(context.instances)
+            val state = one.wabbit.mu.types.TyperState(context.instances)
             val unificationVar = MuType.Use(state.freshVar())
             val (newState, resolved) = state.resolve(value.map {
-                MuType.Constructor("one.wabbit.lang.mu.std.Upcast", listOf(it.type, unificationVar))
+                MuType.Constructor(Upcast.TypeName, listOf(it.type, unificationVar))
             })
 
             // println("newState: ${newState.lattice}")

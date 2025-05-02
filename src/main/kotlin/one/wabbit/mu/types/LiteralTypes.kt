@@ -1,4 +1,4 @@
-package one.wabbit.lang.mu.std
+package one.wabbit.mu.types
 
 import java.math.BigInteger
 

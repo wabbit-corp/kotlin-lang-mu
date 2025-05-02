@@ -1,4 +1,4 @@
-package one.wabbit.lang.mu
+package one.wabbit.mu
 
 open class MuException(message: String, cause: Throwable? = null) : Exception(message, cause)
 

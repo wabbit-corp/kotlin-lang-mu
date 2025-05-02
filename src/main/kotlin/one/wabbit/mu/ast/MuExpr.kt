@@ -1,11 +1,10 @@
-package one.wabbit.lang.mu
+package one.wabbit.mu.ast
 
 import kotlinx.serialization.Serializable
 import one.wabbit.serializers.BigIntegerSerializer
 import java.math.BigInteger
 
-@Serializable
-sealed interface MuExpr {
+@Serializable sealed interface MuExpr {
     @Serializable data class Integer(val value: @Serializable(with=BigIntegerSerializer::class) BigInteger) : MuExpr
     @Serializable data class Double(val value: kotlin.Double) : MuExpr
     @Serializable data class Rational(val value: one.wabbit.math.Rational) : MuExpr
