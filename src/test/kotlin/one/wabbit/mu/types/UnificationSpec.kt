@@ -2,6 +2,9 @@ package one.wabbit.mu.types
 
 import one.wabbit.mu.runtime.MuStdValue
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class UnificationSpec {
     fun forall(v1: String, tpe: MuType) =
@@ -157,5 +160,168 @@ class UnificationSpec {
 //            func(listOf("a"), listOf(use("a")), use("a")),
 //            func(listOf(t("Int")), use("b")),
 //        )
+    }
+
+    // ------- tests: success cases -------
+
+    @Test
+    fun variable_unifies_with_variable() {
+        assertUnifies(use("a"), use("b"))
+    }
+
+    @Test
+    fun variable_unifies_with_forall_instantiation_or_binding() {
+        // Accept either: binding Use to Forall OR instantiation (depending on unifier implementation)
+        assertUnifies(use("a"), forall("a", t("Int")))
+    }
+
+    @Test
+    fun identical_foralls_unify() {
+        assertUnifies(forall("a", t("Int")), forall("a", t("Int")))
+    }
+
+    @Test
+    fun alpha_renamed_foralls_unify() {
+        assertUnifies(forall("a", use("a")), forall("b", use("b")))
+    }
+
+    @Test
+    fun identity_function_foralls_unify() {
+        // ∀a. a -> a    ~    ∀b. b -> b
+        assertUnifies(
+            forall("a", func(listOf(use("a")), use("a"))),
+            forall("b", func(listOf(use("b")), use("b")))
+        )
+    }
+
+    @Test
+    fun polymorphic_function_signatures_unify() {
+        // (∀a) (a) -> a   ~   (∀b) (b) -> b
+        assertUnifies(
+            func(listOf("a"), listOf(use("a")), use("a")),
+            func(listOf("b"), listOf(use("b")), use("b"))
+        )
+    }
+
+    @Test
+    fun list_int_unifies_with_list_var() {
+        // List[Int] ~ List[a]  (bind a := Int)
+        assertUnifies(
+            t("List", listOf(t("Int"))),
+            t("List", listOf(use("a")))
+        )
+    }
+
+    @Test
+    fun forall_maybe_a_unifies_with_forall_maybe_list_b() {
+        // ∀a. Maybe[a]  ~  ∀b. Maybe[List[b]]
+        assertUnifies(
+            forall("a", t("Maybe", listOf(use("a")))),
+            forall("b", t("Maybe", listOf(t("List", listOf(use("b"))))))
+        )
+    }
+
+    // ------- tests: failure cases -------
+
+    @Test
+    fun different_base_constructors_do_not_unify() {
+        assertUnificationFails(t("Int"), t("String"))
+    }
+
+    @Test
+    fun function_parameter_count_mismatch_does_not_unify() {
+        assertUnificationFails(
+            func(listOf(t("Int")), t("String")),
+            func(listOf(t("Int"), t("Int")), t("String"))
+        )
+    }
+
+    @Test
+    fun occurs_check_a_cannot_equal_list_a() {
+        // Expect failure (either generic fail or specific IllegalArgumentException if occurs-check is implemented)
+        assertUnificationFails(use("a"), t("List", listOf(use("a"))))
+
+        // a ~ List[a] must fail (infinite type)
+        assertUnificationFailsWith<OccursCheckException>(
+            use("a"),
+            t("List", listOf(use("a")))
+        )
+    }
+
+    @Test
+    fun different_function_structures_do_not_unify() {
+        // ∀a. a -> Int    vs    ∀b. b -> b
+        assertUnificationFails(
+            forall("a", func(listOf(use("a")), t("Int"))),
+            forall("b", func(listOf(use("b")), use("b")))
+        )
+    }
+
+    @Test
+    fun inconsistent_equalities_on_same_type_var_positions_do_not_unify() {
+        // ∀a. (a, a) -> Bool    vs    (Int, String) -> Bool
+        assertUnificationFails(
+            forall("a", func(listOf(use("a"), use("a")), t("Bool"))),
+            func(listOf(t("Int"), t("String")), t("Bool"))
+        )
+    }
+
+    // ------- additional tests for symmetry and instantiation vs binding -------
+
+    @Test
+    fun quantifierInstantiation_symmetry_for_func() {
+        // (x -> x) ~ ∀a. (a -> a) (both directions)
+        assertUnifies(
+            func(listOf(use("x")), use("x")),
+            forall("a", func(listOf(use("a")), use("a")))
+        )
+        assertUnifies(
+            forall("a", func(listOf(use("a")), use("a"))),
+            func(listOf(use("x")), use("x"))
+        )
+    }
+
+    @Test
+    fun use_unifies_with_forall_by_instantiating_not_binding_polytype() {
+        // x ~ ∀a. List[a]  => x is bound to List[φ], not to the Forall itself
+        val s = TyperState<MuStdValue>()
+        val x = TypeVariable("x")
+        s.unify(
+            MuType.Use(x),
+            forall("a", t("List", listOf(use("a"))))
+        )
+        val bound = s.lattice[x] ?: throw AssertionError("x should be bound in lattice")
+        // We expect a monotype like List[φ…], not a Forall
+        assertTrue(bound !is MuType.Forall, "Use should not bind to a Forall; got $bound")
+        // Quick structural sanity
+        when (bound) {
+            is MuType.Constructor -> assertEquals("List", bound.head)
+            is MuType.Exists -> {
+                val inner = bound.tpe as? MuType.Constructor
+                    ?: throw AssertionError("Exists should contain a Constructor, got $bound")
+                assertEquals("List", inner.head)
+            }
+            else -> throw AssertionError("Unexpected bound form: $bound")
+        }
+    }
+
+    @Test
+    fun helpfulErrors_parameterArityMismatch_message() {
+        val s = TyperState<MuStdValue>()
+        val a = func(listOf(t("Int")), t("String"))
+        val b = func(listOf(t("Int"), t("Int")), t("String"))
+        val ex = assertFailsWith<FunctionParameterArityMismatchException> { s.unify(a, b) }
+        assertTrue(ex.message?.contains("parameter arity mismatch") == true,
+            "Expected parameter arity mismatch message, got: ${ex.message}")
+    }
+
+    @Test
+    fun helpfulErrors_typeMismatch_message() {
+        val s = TyperState<MuStdValue>()
+        val a = func(listOf(t("Int")), t("String"))
+        val b = t("Int")
+        val ex = assertFailsWith<TypeMismatchException> { s.unify(a, b) }
+        assertTrue(ex.message?.contains("type mismatch") == true,
+            "Expected type mismatch message, got: ${ex.message}")
     }
 }

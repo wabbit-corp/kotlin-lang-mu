@@ -1,5 +1,7 @@
 package one.wabbit.mu.types
 
+import one.wabbit.mu.types.TypeFormatter.Companion.default as F
+
 data class Instance<V>(
     val typeParameters: List<TypeVariable>,
     val parameters: List<MuType.Constructor>,
@@ -14,10 +16,10 @@ data class Instance<V>(
                 append(". ")
             }
             if (parameters.isNotEmpty()) {
-                append(parameters.joinToString(", "))
+                append(parameters.joinToString(", ") { F.format(it) })
                 append(" -> ")
             }
-            append(returnType)
+            append(F.format(returnType))
         }
     }
 }

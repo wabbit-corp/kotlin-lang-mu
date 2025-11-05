@@ -48,59 +48,155 @@ class TyperState<Value>(
         }
     }
 
+    private fun occurs(v: TypeVariable, t: MuType): Boolean = when (t) {
+        is MuType.Use ->
+            // equal or already known-equal via lattice
+            v == t.name || (compare(v, t.name) == TypeComparison.Equal)
+        is MuType.Constructor ->
+            t.args.any { occurs(v, it) }
+        is MuType.Func -> {
+            // v bound as a type param? Unlikely (ξ…/φ… vs named), but guard anyway
+            if (t.typeParameters.contains(v)) false
+            else t.parameters.any { occurs(v, it) } || occurs(v, t.returnType)
+        }
+        is MuType.Implicit -> {
+            // v bound as a type param? Unlikely (ξ…/φ… vs named), but guard anyway
+            if (t.typeParameters.contains(v)) false
+            else t.parameters.any { occurs(v, it) } || occurs(v, t.returnType)
+        }
+        is MuType.Forall ->
+            // if the binder shadows v, it cannot occur free underneath
+            if (t.vars.contains(v)) false else occurs(v, t.tpe)
+        is MuType.Exists ->
+            if (t.vars.contains(v)) false else occurs(v, t.tpe)
+    }
+
     /**
      * Unify two types.
      */
     fun unify(a: MuType, b: MuType) {
         UnificationLogger.debug("unifying: $a ~ $b")
 
+        // Always open quantifiers first, on either side
+        if (a is MuType.Forall) return unifyS(a, b)
+        if (b is MuType.Forall) return unifyS(b, a)
+        if (a is MuType.Exists) return unifyS(a, b)
+        if (b is MuType.Exists) return unifyS(b, a)
+
         when (a) {
+            is MuType.Implicit -> unifyS(a, b)
             is MuType.Constructor -> {
                 when (b) {
+                    is MuType.Implicit -> unifyS(b, a)
                     is MuType.Constructor -> unifyS(a, b)
-                    is MuType.Forall -> unifyS(b, a)
                     is Use -> unifyS(b, a)
                     is MuType.Func -> unifyS(b, a)
-                    is MuType.Exists -> unifyS(b, a)
+                    is MuType.Forall -> error("impossible")
+                    is MuType.Exists -> error("impossible")
                 }
             }
-            is MuType.Forall -> {
-                when (b) {
-                    is MuType.Constructor -> unifyS(a, b)
-                    is MuType.Forall -> unifyS(a, b)
-                    is MuType.Exists -> unifyS(a, b)
-                    is Use -> unifyS(a, b)
-                    is MuType.Func -> unifyS(a, b)
-                }
-            }
-            is MuType.Exists -> {
-                when (b) {
-                    is MuType.Constructor -> unifyS(a, b)
-                    is MuType.Forall -> unifyS(a, b)
-                    is MuType.Exists -> unifyS(a, b)
-                    is Use -> unifyS(a, b)
-                    is MuType.Func -> unifyS(a, b)
-                }
-            }
+            is MuType.Forall -> error("impossible")
+            is MuType.Exists -> error("impossible")
             is Use -> {
                 when (b) {
+                    is MuType.Implicit -> unifyS(b, a)
                     is MuType.Constructor -> unifyS(a, b)
-                    is MuType.Forall -> unifyS(a, b)
-                    is MuType.Exists -> unifyS(a, b)
                     is Use -> unifyS(a, b)
                     is MuType.Func -> unifyS(a, b)
+                    is MuType.Forall -> error("impossible")
+                    is MuType.Exists -> error("impossible")
                 }
             }
             is MuType.Func -> {
                 when (b) {
+                    is MuType.Implicit -> unifyS(b, a)
                     is MuType.Constructor -> unifyS(a, b)
-                    is MuType.Forall -> unifyS(a, b)
-                    is MuType.Exists -> unifyS(a, b)
                     is Use -> unifyS(a, b)
                     is MuType.Func -> unifyS(a, b)
+                    is MuType.Forall -> error("impossible")
+                    is MuType.Exists -> error("impossible")
                 }
             }
         }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Typeclass resolution
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    // --- α-variant keys for goals -------------------------------------------
+    // We need a goal key that is stable under:
+    //  - current lattice substitution
+    //  - α-renaming of both bound *and* free type variables
+    // This prevents trivial infinite search via variant cycles:
+    //    f A ξ1  ~>  f A ξ2  ~>  ...
+    //
+    // We treat Func/Forall/Exists as binders and normalise their bound vars.
+    private data class GoalKey(val head: String, val args: List<MuType>)
+
+    private fun alphaKey(c: MuType.Constructor): GoalKey {
+        // Apply current known equalities first
+        val norm = c.subst(lattice)
+
+        // Global renaming env for this normalisation
+        val ren: MutableMap<TypeVariable, TypeVariable> = mutableMapOf()
+        var next = 0
+        fun freshAlpha(): TypeVariable = TypeVariable("α${next++}")
+
+        // Push a list of binder vars with fresh names for the recursive walk.
+        fun <T> withBinders(vars: List<TypeVariable>, body: () -> T): T {
+            val saved: ArrayList<Pair<TypeVariable, TypeVariable?>> = arrayListOf()
+            for (v in vars) {
+                val α = freshAlpha()
+                saved += v to ren.put(v, α) // store previous mapping (may be null)
+            }
+            try { return body() } finally {
+                // restore previous mappings to respect shadowing
+                for ((v, prev) in saved) {
+                    if (prev == null) ren.remove(v) else ren[v] = prev
+                }
+            }
+        }
+
+        fun go(t: MuType): MuType = when (t) {
+            is MuType.Use ->
+                // Always rename variables (free or bound) to canonical αi
+                MuType.Use(ren.getOrPut(t.name) { freshAlpha() })
+
+            is MuType.Constructor ->
+                MuType.Constructor(t.head, t.args.map(::go))
+
+            is MuType.Forall ->
+                withBinders(t.vars) {
+                    MuType.Forall(t.vars.map { ren[it]!! }, go(t.tpe))
+                }
+
+            is MuType.Exists ->
+                withBinders(t.vars) {
+                    MuType.Exists(t.vars.map { ren[it]!! }, go(t.tpe))
+                }
+
+            is MuType.Func ->
+                withBinders(t.typeParameters) {
+                    MuType.Func(
+                        t.typeParameters.map { ren[it]!! },
+                        t.parameters.map(::go),
+                        go(t.returnType)
+                    )
+                }
+
+            is MuType.Implicit ->
+                withBinders(t.typeParameters) {
+                    MuType.Implicit(
+                        t.typeParameters.map { ren[it]!! },
+                        t.parameters.map { go(it) as MuType.Constructor },
+                        go(t.returnType)
+                    )
+                }
+        }
+
+        val n = go(norm) as MuType.Constructor
+        return GoalKey(n.head, n.args)
     }
 
     /**
@@ -116,9 +212,12 @@ class TyperState<Value>(
             return this to emptyList()
         }
 
-        val debug = false
+        val debug = true
 
-        if (debug) println("Resolving: $typeclasses")
+        val F = TypeFormatter.default
+        fun MuType.format(): String = F.format(this)
+
+        ResolutionLogger.info("Resolving: ${typeclasses.joinToString(", ") { it.format() }}")
 
 //        var goalId = 0
 
@@ -143,29 +242,33 @@ class TyperState<Value>(
             val goals: List<Goal>,
             val state: TyperState<Value>,
             val accumulated: Map<MuType.Constructor, InstanceWithGoals>,
+            val ancestors: Set<GoalKey>
         ) : Comparable<State> {
             val score: Int = depth + goals.size
             override fun compareTo(other: State): Int = score.compareTo(other.score)
         }
 
         val queue = PriorityQueue<State>()
+        // nogood cache of α-variant goals known to be unsatisfiable under current lattice
+        val nogoods = mutableSetOf<GoalKey>()
         var iterations = 0
-        queue.add(State(0, typeclasses.map { makeGoal(it) }, this, emptyMap()))
+        queue.add(State(0, typeclasses.map { makeGoal(it) }, this, emptyMap(), emptySet()))
 
         while (queue.isNotEmpty() && iterations < maxIterations) {
             iterations += 1
-            val (depth, goals, state, accumulated) = queue.poll()
+            val state = queue.poll()
+            val (depth, goals, typerState, accumulated, _) = state
             val prefix = "  ".repeat(depth + 1)
 
             if (goals.isEmpty()) {
-                if (debug) println("${prefix}Found:")
+                ResolutionLogger.info("${prefix}Found:")
                 for ((goal, instance) in accumulated) {
 //                    val original = if (goal < typeclasses.size) {
 //                        typeclasses[goal]
 //                    } else {
 //                        null
 //                    }
-                    if (debug) println("${prefix}  $goal [${instance.type}] -> $instance")
+                    ResolutionLogger.info("${prefix}  ${goal.format()} [${instance.type.format()}] -> $instance")
                 }
 
                 fun build(goal: MuType.Constructor): Value {
@@ -178,21 +281,58 @@ class TyperState<Value>(
                     build(it)
                 }
 
-                return state to result
+                return typerState to result
 
                 break
             }
 
-            val sortedGoals = goals.sortedBy {
-                it.typeclass.args.size
-            }
+             // ---- helper: count open vars (after current substitution), for better goal ordering
+             fun varCount(t: MuType): Int = when (t) {
+                 is MuType.Use -> 1
+                 is MuType.Constructor -> t.args.sumOf(::varCount)
+                 is MuType.Forall -> varCount(t.tpe)
+                 is MuType.Exists -> varCount(t.tpe)
+                 is MuType.Func -> t.typeParameters.size + t.parameters.sumOf(::varCount) + varCount(t.returnType)
+                 is MuType.Implicit -> t.typeParameters.size + t.parameters.sumOf(::varCount) + varCount(t.returnType)
+             }
+             // ---- helper: α-dedupe a list of goals under the given state
+             fun dedupAlpha(gs: List<Goal>, s: TyperState<Value>): List<Goal> {
+                 val seen = HashSet<GoalKey>()
+                 val out = ArrayList<Goal>(gs.size)
+                 for (g in gs) {
+                     val k = s.alphaKey(g.typeclass)
+                     if (seen.add(k)) out += g
+                 }
+                 return out
+             }
+             // Prefer more instantiated goals; also drop in-state α-duplicates up front.
+             val uniqueGoals = dedupAlpha(goals, typerState)
+             val sortedGoals = uniqueGoals.sortedWith(
+                 compareBy<Goal> { varCount(it.typeclass.subst(typerState.lattice)) }
+                     .thenBy { it.typeclass.args.size }
+             )
 
             for (targetIndex in sortedGoals.indices) {
                 val rest = sortedGoals.toMutableList()
                 val goal = rest.removeAt(targetIndex)
-                if (debug) println("${prefix}Trying goal: ${goal.typeclass}")
+                ResolutionLogger.info("${prefix}Trying goal: ${goal.typeclass.format()}")
                 val head = goal.typeclass.head
-                val instances = state.instances[head] ?: continue
+                val instances = typerState.instances[head] ?: continue
+
+                 // α-key of the selected goal
+                 val selKey = typerState.alphaKey(goal.typeclass)
+                 // If we somehow see an ancestor-variant again at the same node, skip immediately
+                 if (selKey in state.ancestors) {
+                     ResolutionLogger.info("${prefix}  Skipping goal (ancestor variant): ${goal.typeclass.format()}")
+                     continue
+                 }
+
+                // Skip states whose selected goal is already known to be impossible.
+                val gKey = selKey
+                if (gKey in nogoods) {
+                    ResolutionLogger.info("${prefix}  Skipping goal (nogood): ${goal.typeclass.format()}")
+                    continue
+                }
 
                 val sortedInstances = instances.sortedBy {
                     it.parameters.size
@@ -202,7 +342,7 @@ class TyperState<Value>(
                 var foundOne = false
                 for (instance in sortedInstances) {
                     try {
-                        val newState = state.copy()
+                        val newState = typerState.copy()
                         val aS = instance.typeParameters.associateWith { Use(freshVar()) }
                         val instanceType = instance.returnType.subst(aS)
                         newState.unify(goal.typeclass, instanceType)
@@ -210,35 +350,51 @@ class TyperState<Value>(
 //                        println("${prefix}  instanceType: $instanceType")
 //                        println("${prefix}  instance params: ${instance.parameters.map { it.subst(aS) }}")
 
-                        val newGoals = instance.parameters.map { it.subst(aS).subst(newState.lattice) }.map {
-                            makeGoal(it as MuType.Constructor)
-                        }
-                        val newRest = rest.map {
+                        val newGoals = instance.parameters
+                            .map { it.subst(aS).subst(newState.lattice) }
+                            .map { makeGoal(it as MuType.Constructor) }
+
+                        val newRest0 = rest.map {
                             val newTC = it.typeclass.subst(newState.lattice) as MuType.Constructor
                             Goal(it.id, newTC)
                         } + newGoals
+
+                         // Drop α-duplicate goals *inside the child state* to prevent fan-out
+                         val newRest = dedupAlpha(newRest0, newState)
+
+                         // --- STRONGER: α-variant loop check with full ancestry set
+                         // Do not enqueue if the child would (re)introduce any α-variant of a goal on the path.
+                         val childAncestors = state.ancestors + selKey
+                         val anyLoop = newRest.any { newState.alphaKey(it.typeclass) in childAncestors }
+                         if (anyLoop) {
+                             ResolutionLogger.info("${prefix}  Pruned by α-variant loop check (ancestor)")
+                             continue
+                         }
+                        
                         val goalSubst = goal.typeclass.subst(newState.lattice) as MuType.Constructor
                         val newInstance = InstanceWithGoals(goalSubst, instance, newGoals.map { it.id })
                         foundOne = true
                         val newAccumulated = accumulated + (goal.id to newInstance)
-                        queue.add(State(depth + 1, newRest, newState, newAccumulated))
+                        queue.add(State(depth + 1, newRest, newState, newAccumulated, childAncestors))
 
-                        if (debug) println("${prefix}  unified with ${instance}: ${newState.lattice} ${newAccumulated.map { it.value.type }}")
+                        ResolutionLogger.info("${prefix}  unified with ${instance}: ${newState.lattice} ${newAccumulated.map { it.value.type }}")
                         // println("${prefix}New state: ${newState.lattice}")
                     } catch (e: Throwable) {
-                        errors.add("${prefix}  $goal ~ ${instance.returnType} : $e")
+                        errors.add("${prefix}  $goal ~ ${instance.returnType.format()} : $e")
                         continue
                     }
                 }
 
                 if (!foundOne && debug) {
-                    println("${prefix}  Errors:")
-                    for (error in errors) {
-                        println(error)
-                    }
+                    ResolutionLogger.info("${prefix}  Errors: ${errors.joinToString(", ")}")
                 }
 
-                if (debug) println("${prefix}END GOAL: ${goal.typeclass}")
+                // If no instance worked for this selected goal, remember it as a nogood.
+                if (!foundOne) {
+                    nogoods.add(gKey)
+                }
+
+                ResolutionLogger.info("${prefix}END GOAL: ${goal.typeclass.format()}")
             }
         }
 
@@ -249,23 +405,23 @@ class TyperState<Value>(
 
         // If queue is empty and no solution was found
         if (iterations >= maxIterations) {
-            ResolutionLogger.error("Instance resolution exceeded max iterations ($maxIterations) for goals: $typeclasses")
+            ResolutionLogger.error("Instance resolution exceeded max iterations ($maxIterations) for goals: ${typeclasses.joinToString(", ") { it.format() }}}")
         } else {
-            ResolutionLogger.error("Instance resolution failed for goals: $typeclasses")
+            ResolutionLogger.error("Instance resolution failed for goals: ${typeclasses.joinToString(", ") { it.format() }}")
         }
 
         // We need to know which goal failed. This requires more sophisticated tracking
         // or analyzing the remaining states in the queue if it wasn't empty.
         // For now, throw a general error.
-        throw InstanceNotFoundException(typeclasses.first()) // Report failure on the first goal as a starting point
+        throw InstanceNotFoundException(typeclasses.first(), iterations, maxIterations) // Report failure on the first goal as a starting point
     }
 
     internal fun unifyS(a: MuType.Constructor, b: MuType.Constructor) {
         if (a.head != b.head) {
-            throw IllegalArgumentException("head mismatch: ${a.head} != ${b.head}")
+            throw TypeConstructorHeadMismatchException(a.head, b.head, a, b)
         }
         if (a.args.size != b.args.size) {
-            throw IllegalArgumentException("arity mismatch: ${a.args} != ${b.args}")
+            throw TypeArgumentArityMismatchException(a.head, a.args.size, b.args.size, a, b)
         }
         for ((a, b) in a.args.zip(b.args)) {
             unify(a, b)
@@ -289,6 +445,9 @@ class TyperState<Value>(
             if (b is Use) {
                 lattice.join(a.name, b.name)
             } else {
+                if (occurs(a.name, b)) {
+                    throw OccursCheckException(a.name, b)
+                }
                 lattice[a.name] = b
             }
         }
@@ -299,7 +458,9 @@ class TyperState<Value>(
             val bS = b.typeParameters.associateWith { Use(freshVar()) }
 
             if (a.parameters.size != b.parameters.size) {
-                throw IllegalArgumentException("parameter arity mismatch: ${a.parameters} != ${b.parameters}")
+                throw FunctionParameterArityMismatchException(
+                    a.parameters.size, b.parameters.size, a, b
+                )
             }
 
             for ((a, b) in a.parameters.zip(b.parameters)) {
@@ -308,7 +469,12 @@ class TyperState<Value>(
             unify(a.returnType.subst(aS), b.returnType.subst(bS))
         }
         else {
-            throw IllegalArgumentException("type mismatch: $a != $b")
+            throw TypeMismatchException(a, b) // message contains "type mismatch"
         }
+    }
+    internal fun unifyS(a: MuType.Implicit, b: MuType) {
+        val σ = a.typeParameters.associateWith { MuType.Use(freshExistentialVar()) }
+        // DO NOT accumulate constraints here
+        unify(a.returnType.subst(σ), b)
     }
 }

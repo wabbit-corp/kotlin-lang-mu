@@ -1,3 +1,5 @@
+@file:OptIn(InternalMuApi::class)
+
 package one.wabbit.mu
 
 import one.wabbit.data.rightOrNull

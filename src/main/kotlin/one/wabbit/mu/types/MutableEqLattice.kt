@@ -61,20 +61,38 @@ class MutableEqLattice<From, To> private constructor(
             val nextCluster = e2c.size
             e2c[first] = nextCluster
             e2c[second] = nextCluster
+            return
         } else if (c1 == null && c2 != null) {
             e2c[first] = c2
+            return
         } else if (c1 != null && c2 == null) {
             e2c[second] = c1
-        } else {
-            c1!!
-            c2!!
-            if (c1 == c2) {
-                return
-            } else {
-                val (c1, c2) = (minOf(c1, c2) to maxOf(c1, c2))
-                c2c[c1] = c2
-            }
+            return
         }
+
+        // Both exist; unify their roots
+        var r1 = c1!!
+        var r2 = c2!!
+        if (r1 == r2) return
+
+        val (small, large) = if (r1 < r2) r1 to r2 else r2 to r1
+
+        // *** NEW: migrate representative values to the new root
+        val vSmall = c2r[small]
+        val vLarge = c2r[large]
+        // Link small -> large
+        c2c[small] = large
+
+        when {
+            vLarge == null && vSmall != null -> {
+                c2r[large] = vSmall
+            }
+            // if both non-null and different, we *could* attempt to reconcile here,
+            // but we let the higher-level unifier deal with it; at minimum, don't lose both.
+            else -> { /* keep vLarge if present */ }
+        }
+        // Optional: clear old slot to keep map tidy
+        if (vSmall != null) c2r.remove(small)
     }
 
     fun compare(left: From, right: From): Boolean {

@@ -6,13 +6,18 @@ import one.wabbit.math.Rational
 import one.wabbit.data.Either
 import one.wabbit.data.Left
 import one.wabbit.data.Right
+import one.wabbit.mu.InternalMuApi
 import one.wabbit.mu.ast.MuExpr
 import one.wabbit.mu.types.*
 import java.io.File
 import java.lang.reflect.InvocationTargetException
 import java.math.BigInteger
 import kotlin.reflect.*
+import kotlin.reflect.full.createType
+import kotlin.reflect.full.primaryConstructor
 import kotlin.reflect.jvm.isAccessible
+
+
 
 sealed interface MuIO<R> {
     data class Scoped<R>(val nested: MuIO<R>): MuIO<R>
@@ -70,7 +75,21 @@ data class MuStdFunc(
     val run: (MuStdContext, Map<String, MuStdValue>) -> Pair<MuStdContext, MuStdValue>,
 )
 
-internal fun makeInstanceFromMember(jvmModuleRef: Any, member: KCallable<*>): Instance<MuStdValue> {
+private fun collectImplicitGoals(
+    state: TyperState<MuStdValue>,
+    args: List<MuStdValue>
+): List<MuType.Constructor> {
+    val goals = mutableListOf<MuType.Constructor>()
+    for (arg in args) {
+        val t = arg.type.subst(state.lattice)
+        if (t is MuType.Implicit) {
+            goals += t.parameters.map { (it.subst(state.lattice) as MuType.Constructor) }
+        }
+    }
+    return goals
+}
+
+@InternalMuApi fun makeInstanceFromMember(jvmModuleRef: Any, member: KCallable<*>): Instance<MuStdValue> {
     when (member) {
         is KProperty -> {
             val returnType = MuType.fromKType(member.returnType)
@@ -113,7 +132,7 @@ internal fun makeInstanceFromMember(jvmModuleRef: Any, member: KCallable<*>): In
     }
 }
 
-internal fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: KCallable<*>): MuStdValue {
+@InternalMuApi fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: KCallable<*>): MuStdValue {
     when (member) {
         is KMutableProperty -> {
             val propertyType = MuType.fromKType(member.returnType)
@@ -147,7 +166,7 @@ internal fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: 
 
                     @Suppress("UNCHECKED_CAST")
                     val upcast = r[0].unsafeValue as Upcast<Any?, Any?>
-                    member.setter.call(jvmModuleRef, upcast.upcast(value.unsafeValue))
+                    member.setter.call(jvmModuleRef, upcast(value.unsafeValue))
                     return@func ctx to MuStdValue.unsafeLift(oldValue, propertyType)
                 }
 
@@ -237,7 +256,6 @@ internal fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: 
                 check(resultType is MuType.Constructor)
                 check(resultType.head == "kotlin.Pair")
                 check(resultType.args.size == 2)
-                println(MuStdContext.TypeName)
                 check(resultType.args[0] == MuType.Constructor(MuStdContext.TypeName, emptyList()))
                 resultType = resultType.args[1]
             }
@@ -255,30 +273,36 @@ internal fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: 
 
                 for (i in 0 until args.size) {
                     val arg = args[i]
+                    val param = parameters[i]
                     if (arg == null) {
-                        val param = parameters[i]
                         if (param.arity == ArgArity.Required) {
-                            error("Missing required argument: ${param.name}")
+                            throw MissingRequiredArgumentException(exportName, param.name)
                         }
                     } else {
                         try {
-                            state.unify(parameters[i].type, arg.type)
+                            state.unify(param.type, arg.type)
                         } catch (e: Throwable) {
                             try {
                                 val (_, r) = state.resolve(
                                     listOf(
                                         MuType.Constructor(
                                             Upcast.TypeName,
-                                            listOf(arg.type, parameters[i].type)
+                                            listOf(arg.type, param.type)
                                         )
                                     )
                                 )
 
                                 @Suppress("UNCHECKED_CAST")
                                 val upcast = r[0].unsafeValue as Upcast<Any?, Any?>
-                                args[i] = MuStdValue.unsafeLift(upcast.upcast(arg.unsafeValue), parameters[i].type)
+                                args[i] = MuStdValue.unsafeLift(upcast(arg.unsafeValue), param.type)
                             } catch (e: Throwable) {
-                                error("Type mismatch in argument ${parameters[i].name}: ${arg.type} vs ${parameters[i].type}")
+                                throw TypeMismatchInArgumentException(
+                                    exportName,
+                                    param.name,
+                                    param.type,
+                                    arg.type,
+                                    "No implicit Upcast[${TypeFormatter.default.format(arg.type)} <:< ${TypeFormatter.default.format(param.type)}] was found"
+                                )
                             }
                         }
                     }
@@ -288,7 +312,11 @@ internal fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: 
                     args.add(0, MuStdValue.lift(ctx))
                 }
 
-                val (statePostResolution, implicitArgs) = state.resolve(implicits.map { it.subst(state.lattice) as MuType.Constructor })
+                val calleeGoals = implicits.map { it.subst(state.lattice) as MuType.Constructor }
+                val argGoals = collectImplicitGoals(state, args.filterNotNull())
+                val allGoals = calleeGoals + argGoals
+
+                val (statePostResolution, implicitArgs) = state.resolve(allGoals)
                 for (a in implicitArgs) {
                     args.add(a)
                 }
@@ -314,6 +342,122 @@ internal fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: 
         else -> {
             error("Unsupported member type: ${member.javaClass}")
         }
+    }
+}
+
+/**
+ * Build a MuStdValue.func that constructs instances of a Kotlin data class by mirroring the
+ * primary constructor. Optionality is inferred as:
+ *  - ArgArity.Required         -> non-null, no default
+ *  - ArgArity.Optional         -> nullable OR has a default value
+ *  - ArgArity.ZeroOrMore       -> List<…> AND has a default value (e.g., = emptyList())
+ *
+ * Types are checked and upcast using the same TyperState/Upcast dance used elsewhere.
+ */
+@InternalMuApi fun <T : Any> makeValueFromDataType(
+    exportName: String,
+    kClass: KClass<T>
+): MuStdValue {
+    val ctor = kClass.primaryConstructor
+        ?: error("makeValueFromDataType: ${kClass.qualifiedName} must have a primary constructor")
+
+    // Return type is the data class itself
+    val returnType = MuType.fromKType(kClass.createType())
+    require(returnType is MuType.Constructor) {
+        "Return type of $exportName must be a MuType.Constructor"
+    }
+
+    // Build Mu args from the ctor parameters
+    data class ParamSpec(
+        val kParam: KParameter,
+        val muType: MuType,
+        val arg: Arg<MuStdValue>
+    )
+
+    fun inferArity(p: KParameter): ArgArity {
+        val isList = (p.type.classifier == List::class)
+        return when {
+            isList && p.isOptional -> ArgArity.ZeroOrMore   // e.g., = emptyList()
+            p.isOptional || p.type.isMarkedNullable -> ArgArity.Optional
+            else -> ArgArity.Required
+        }
+    }
+
+    val specs: List<ParamSpec> = ctor.parameters.map { p ->
+        require(p.kind == KParameter.Kind.VALUE) {
+            "Unsupported parameter kind ${p.kind} in ${kClass.qualifiedName}"
+        }
+        val name = requireNotNull(p.name) {
+            "All constructor parameters must be named for ${kClass.qualifiedName}"
+        }
+        val muParamType = MuType.fromKType(p.type)
+        val arity = inferArity(p)
+        ParamSpec(
+            kParam = p,
+            muType = muParamType,
+            arg = Arg(name, quote = false, arity = arity, type = muParamType)
+        )
+    }
+
+    val args = specs.map { it.arg }
+
+    return MuStdValue.func(
+        exportName,
+        typeParameters = emptyList(),
+        parameters = args,
+        returnType = returnType
+    ) { ctx, argMap ->
+        val state = one.wabbit.mu.types.TyperState<MuStdValue>(ctx.instances)
+        val callByArgs = mutableMapOf<KParameter, Any?>()
+
+        for (spec in specs) {
+            val p = spec.kParam
+            val name = p.name!!
+            val arg = argMap[name]  // May be null if omitted; that's fine for optional/defaulted params
+
+            if (arg == null) {
+                // Omitted argument: only allowed if optional or nullable (or ZeroOrMore with default)
+                if (!(p.isOptional || p.type.isMarkedNullable)) {
+                    throw MissingRequiredArgumentException(exportName, name)
+                }
+                // Let callBy apply the default / null by omission
+                continue
+            }
+
+            // Type-check + upcast to the expected parameter type
+            try {
+                state.unify(spec.muType, arg.type)
+                callByArgs[p] = arg.unsafeValue
+            } catch (e: Throwable) {
+                try {
+                    val (_, r) = state.resolve(
+                        listOf(
+                            MuType.Constructor(
+                                Upcast.TypeName,
+                                listOf(arg.type, spec.muType)
+                            )
+                        )
+                    )
+                    @Suppress("UNCHECKED_CAST")
+                    val upcast = r[0].unsafeValue as Upcast<Any?, Any?>
+                    callByArgs[p] = upcast(arg.unsafeValue)
+                } catch (_: Throwable) {
+                    throw TypeMismatchInArgumentException(
+                        exportName, name, spec.muType, arg.type,
+                        "No implicit Upcast[${TypeFormatter.default.format(arg.type)} <:< ${TypeFormatter.default.format(spec.muType)}] was found"
+                    )
+                }
+            }
+        }
+
+        // Construct the instance, letting Kotlin supply defaults for omitted optional args
+        val instance = try {
+            ctor.callBy(callByArgs)
+        } catch (e: InvocationTargetException) {
+            throw e.targetException
+        }
+
+        ctx to MuStdValue.unsafeLift(instance, returnType)
     }
 }
 
@@ -381,6 +525,7 @@ data class MuStdContext(
     fun withModule(moduleName: String, vararg definitions: Pair<String, MuStdValue>): MuStdContext =
         this.copy(modules = modules.put(moduleName, MuStdModule(persistentMapOf(*definitions.toList().toTypedArray()))))
 
+    @OptIn(InternalMuApi::class)
     fun withNativeModule(moduleName: String, jvmModuleRef: Any): MuStdContext {
         var definitions = persistentMapOf<String, MuStdValue>()
         var newInstances = instances
@@ -417,6 +562,9 @@ data class MuStdContext(
             modules = modules.put(moduleName, MuStdModule(definitions)),
             instances = newInstances)
     }
+
+    fun withOpenedNativeModule(moduleName: String, jvmModuleRef: Any): MuStdContext =
+        this.withNativeModule(moduleName, jvmModuleRef).withOpenModule(moduleName)
 
     fun resolve(name: String): Either<ResolutionError, MuStdValue> {
         val m = Regex("([a-zA-Z0-9_-]+)/(.+)").matchEntire(name)
@@ -492,7 +640,7 @@ data class MuStdContext(
 
             val newValues = resolved.indices.map {
                 val upcast = resolved[it].unsafeValue as Upcast<Any?, Any?>
-                upcast.upcast(value[it].unsafeValue)
+                upcast(value[it].unsafeValue)
             }
 
             return MuStdValue.unsafeLift(newValues, MuType.List(newType))

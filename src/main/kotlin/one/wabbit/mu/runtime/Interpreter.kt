@@ -165,3 +165,20 @@ fun <Context, Value> evaluateMu(context: Context, expr: MuExpr, tc: InterpreterC
         }
     }
 }
+
+fun <Context, Value> evaluateMu(
+    context: Context,
+    exprs: List<MuExpr>,
+    tc: InterpreterContext<Context, Value>
+): Pair<Context, Value> {
+    var ctx = context
+    var lastValue: Value = tc.liftExpr(ctx, MuExpr.String("unit"))
+
+    for (expr in exprs) {
+        val r = evaluateMu(ctx, expr, tc)
+        ctx = r.first
+        lastValue = r.second
+    }
+
+    return ctx to lastValue
+}

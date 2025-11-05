@@ -1,15 +1,32 @@
 package one.wabbit.mu.types
 
-interface Upcast<A, B> {
-    fun upcast(value: A): B
+import one.wabbit.math.Rational
+import java.math.BigInteger
+
+fun interface Upcast<A, B> {
+    operator fun invoke(value: A): B
 
     companion object {
         val TypeName = Upcast::class.qualifiedName!!
 
         fun <A, B> of(f: (A) -> B): Upcast<A, B> = object : Upcast<A, B> {
-            override fun upcast(value: A): B = f(value)
+            override fun invoke(value: A): B = f(value)
         }
+        fun <A : B, B> id(): Upcast<A, B> = of { it }
     }
+}
+
+fun interface FromString<A> {
+    fun fromString(value: String): A
+}
+fun interface FromInteger<A> {
+    fun fromInteger(value: BigInteger): A
+}
+fun interface FromRational<A> {
+    fun fromDouble(value: Rational): A
+}
+fun interface FromDouble<A> {
+    fun fromDouble(value: Double): A
 }
 
 interface Eq<A> {

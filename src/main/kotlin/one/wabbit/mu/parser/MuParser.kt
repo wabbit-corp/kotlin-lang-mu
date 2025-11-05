@@ -1,6 +1,7 @@
 package one.wabbit.mu.parser
 
 import one.wabbit.math.Rational
+import one.wabbit.mu.MuException
 import one.wabbit.parsing.CharInput
 import one.wabbit.parsing.Pos
 import one.wabbit.parsing.TextAndPosSpan
@@ -38,14 +39,15 @@ internal fun Char.isNameChar(): Boolean =
             this == '&' || this == '~' || this == '^' || this == '|' ||
             this == '<' || this == '>' || this == ':'
 
-class ParserException(message: String, pos: Pos) : Exception("$message at $pos")
+class MuParseException(message: String, pos: Pos) : MuException("$message at $pos")
 
 class MuParser(val input: CharInput<TextAndPosSpan>) {
     private inline fun require(value: Boolean, lazyMessage: () -> String): Unit {
-        if (!value) throw ParserException(lazyMessage(), input.pos())
+        if (!value) throw MuParseException(lazyMessage(), input.pos())
     }
+    @Suppress("NOTHING_TO_INLINE")
     private inline fun error(message: String): Nothing {
-        throw ParserException(message, input.pos())
+        throw MuParseException(message, input.pos())
     }
 
     fun skipWS() {

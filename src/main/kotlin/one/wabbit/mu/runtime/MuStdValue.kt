@@ -10,6 +10,7 @@ import kotlin.reflect.KParameter
 import kotlin.reflect.KType
 import kotlin.reflect.typeOf
 
+@ConsistentCopyVisibility
 data class MuStdValue private constructor(val unsafeValue: Any?, val type: MuType) {
     override fun toString(): String {
         return "$unsafeValue : ${TypeFormatter.default.format(type)}"

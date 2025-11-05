@@ -32,6 +32,7 @@ class TypeFormatter(private val rewrites: Map<String, RewrittenName>) {
             is Exists -> formatExists(type)
             is Use -> formatUse(type)
             is Func -> formatFunc(type)
+            is Implicit -> formatImplicit(type)
         }
     }
 
@@ -86,12 +87,16 @@ class TypeFormatter(private val rewrites: Map<String, RewrittenName>) {
         // Add parentheses if the type is a Func, Forall, Exists, or an Infix/Nullable Constructor
         val needsParens = when(type) {
             is Func, is Forall, is Exists -> true
+            is Implicit -> true
             is Constructor -> rewrites[type.head] is RewrittenName.Infix || type.head == "?"
             is Use -> false
         }
         return if (needsParens) "($formatted)" else formatted
     }
 
+    private fun formatImplicit(type: Implicit): String {
+        return "forall ${type.typeParameters.joinToString(", ")}. ${type.parameters.joinToString(", ")} => ${format(type.returnType)}"
+    }
 
     private fun formatForall(type: Forall): String {
         return "forall ${type.vars.joinToString(", ")}. ${format(type.tpe)}"
