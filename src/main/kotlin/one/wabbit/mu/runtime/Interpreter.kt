@@ -1,11 +1,14 @@
 package one.wabbit.mu.runtime
 
+import java.math.BigInteger
+import one.wabbit.data.Either
+import one.wabbit.data.Left
+import one.wabbit.data.Right
+import one.wabbit.data.Validated
 import one.wabbit.math.Rational
-import one.wabbit.data.*
 import one.wabbit.mu.MuException
 import one.wabbit.mu.ast.MuExpr
 import one.wabbit.mu.parser.MuParser
-import java.math.BigInteger
 
 fun capturedVars(expr: MuExpr): Set<String> {
     when (expr) {
@@ -30,35 +33,44 @@ fun capturedVars(expr: MuExpr): Set<String> {
     }
 }
 
-class UnboundVariableException(val name: String, val similar: List<String>): MuException("unbound variable: $name, did you mean: $similar")
-class EmptyApplicationException: MuException("empty application")
-class HeadIsNotAFunctionException(val expr: MuExpr, val value: Any?): MuException("head is not a function: $expr -> $value")
+class UnboundVariableException(val name: String, val similar: List<String>) :
+    MuException("unbound variable: $name, did you mean: $similar")
 
-sealed class ResolutionError(message: String, cause: Throwable? = null) : MuException(message, cause) {
-    data class UnknownModuleName(
-        val moduleName: String, val similarNames: List<String>
-    ) : ResolutionError("Unknown module name: $moduleName, similar names: $similarNames")
-    data class UnboundVariable(
-        val variableName: String, val similarNames: List<String>
-    ) : ResolutionError("Unbound variable: $variableName, similar names: $similarNames")
+class EmptyApplicationException : MuException("empty application")
+
+class HeadIsNotAFunctionException(val expr: MuExpr, val value: Any?) :
+    MuException("head is not a function: $expr -> $value")
+
+sealed class ResolutionError(message: String, cause: Throwable? = null) :
+    MuException(message, cause) {
+    data class UnknownModuleName(val moduleName: String, val similarNames: List<String>) :
+        ResolutionError("Unknown module name: $moduleName, similar names: $similarNames")
+
+    data class UnboundVariable(val variableName: String, val similarNames: List<String>) :
+        ResolutionError("Unbound variable: $variableName, similar names: $similarNames")
 }
 
 interface InterpreterContext<Context, Value> {
     fun liftExpr(context: Context, value: MuExpr): Value
 
     fun liftInteger(context: Context, value: BigInteger): Value
+
     fun liftDouble(context: Context, value: Double): Value
+
     fun liftString(context: Context, value: String): Value
+
     fun liftRational(context: Context, value: Rational): Value
+
     fun liftList(context: Context, value: List<Value>): Value
 
     fun resolve(context: Context, name: String): Either<ResolutionError, Value>
+
     // fun resolveSimilar(context: Context, name: String, maxSize: Int): List<String>
 
     data class MuFunc<Context, Value>(
         val name: kotlin.String?,
         val args: List<Arg<Value>>,
-        val run: (Context, Map<String, Value>) -> Pair<Context, Value>
+        val run: (Context, Map<String, Value>) -> Pair<Context, Value>,
     ) {
         init {
             val r = validateArgs(args)
@@ -71,13 +83,21 @@ interface InterpreterContext<Context, Value> {
     fun extractFunc(value: Value): MuFunc<Context, Value>?
 }
 
-fun <Context, Value> evaluateMu(context: Context, expr: String, tc: InterpreterContext<Context, Value>): Pair<Context, Value> {
+fun <Context, Value> evaluateMu(
+    context: Context,
+    expr: String,
+    tc: InterpreterContext<Context, Value>,
+): Pair<Context, Value> {
     val parsed = MuParser.parse(expr)
     check(parsed.size == 1)
     return evaluateMu(context, parsed[0].lower(), tc)
 }
 
-fun <Context, Value> evaluateMu(context: Context, expr: MuExpr, tc: InterpreterContext<Context, Value>): Pair<Context, Value> {
+fun <Context, Value> evaluateMu(
+    context: Context,
+    expr: MuExpr,
+    tc: InterpreterContext<Context, Value>,
+): Pair<Context, Value> {
     var ctx = context
 
     when (expr) {
@@ -86,10 +106,11 @@ fun <Context, Value> evaluateMu(context: Context, expr: MuExpr, tc: InterpreterC
         is MuExpr.Rational -> return ctx to tc.liftRational(ctx, expr.value)
         is MuExpr.String -> return ctx to tc.liftString(ctx, expr.value)
 
-        is MuExpr.Atom -> when (val resolvedValue = tc.resolve(ctx, expr.value)) {
-            is Left -> throw resolvedValue.value
-            is Right -> return ctx to resolvedValue.value
-        }
+        is MuExpr.Atom ->
+            when (val resolvedValue = tc.resolve(ctx, expr.value)) {
+                is Left -> throw resolvedValue.value
+                is Right -> return ctx to resolvedValue.value
+            }
 
         is MuExpr.Seq -> {
             if (expr.value.isEmpty()) {
@@ -101,23 +122,28 @@ fun <Context, Value> evaluateMu(context: Context, expr: MuExpr, tc: InterpreterC
             ctx = headCtxAndValue.first
             val headValue = headCtxAndValue.second
 
-            val function = tc.extractFunc(headValue) ?: throw HeadIsNotAFunctionException(expr.value[0], headValue)
+            val function =
+                tc.extractFunc(headValue)
+                    ?: throw HeadIsNotAFunctionException(expr.value[0], headValue)
 
-
-            val argMap = try {
-                matchArgs(
-                    function.args.map { Pair(it.arity, it.name) },
-                    expr.value.drop(1).map {
-                        if (it is MuExpr.Atom && it.value.startsWith(":")) {
-                            Left(it.value.drop(1))
-                        } else {
-                            Right(it)
-                        }
-                    }
-                )
-            } catch(e: UnknownArgumentException) {
-                throw MuException("unknown argument: ${e.names} when matching arguments to ${unevaluatedHead}", e)
-            }
+            val argMap =
+                try {
+                    matchArgs(
+                        function.args.map { Pair(it.arity, it.name) },
+                        expr.value.drop(1).map {
+                            if (it is MuExpr.Atom && it.value.startsWith(":")) {
+                                Left(it.value.drop(1))
+                            } else {
+                                Right(it)
+                            }
+                        },
+                    )
+                } catch (e: UnknownArgumentException) {
+                    throw MuException(
+                        "unknown argument: ${e.names} when matching arguments to $unevaluatedHead",
+                        e,
+                    )
+                }
 
             val argValues = mutableMapOf<String, Value>()
             for (arg in function.args) {
@@ -169,7 +195,7 @@ fun <Context, Value> evaluateMu(context: Context, expr: MuExpr, tc: InterpreterC
 fun <Context, Value> evaluateMu(
     context: Context,
     exprs: List<MuExpr>,
-    tc: InterpreterContext<Context, Value>
+    tc: InterpreterContext<Context, Value>,
 ): Pair<Context, Value> {
     var ctx = context
     var lastValue: Value = tc.liftExpr(ctx, MuExpr.String("unit"))

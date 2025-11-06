@@ -1,20 +1,17 @@
 package one.wabbit.mu.parser
 
-import one.wabbit.math.Rational
-import one.wabbit.mu.ast.MuExpr
-import one.wabbit.parsing.CharInput
 import java.io.File
 import java.math.BigInteger
 import java.util.SplittableRandom
 import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import one.wabbit.math.Rational
+import one.wabbit.mu.ast.MuExpr
+import one.wabbit.parsing.CharInput
 
 class MuParserSpec {
-    data class MarkovChain(
-        val p1: Map<Char, Double>,
-        val p2: Map<Char, Map<Char, Double>>
-    ) {
+    data class MarkovChain(val p1: Map<Char, Double>, val p2: Map<Char, Map<Char, Double>>) {
         fun sampleFirst(random: SplittableRandom): Char {
             val r = random.nextDouble()
             var sum = 0.0
@@ -79,44 +76,58 @@ class MuParserSpec {
         }
 
         val first_sum = first_freq.values.sum()
-        val p1 = first_freq.mapValues { (_, v) ->
-            (v.toDouble() + 0.5) / (first_sum + 0.5 * first_freq.size)
-        }
+        val p1 =
+            first_freq.mapValues { (_, v) ->
+                (v.toDouble() + 0.5) / (first_sum + 0.5 * first_freq.size)
+            }
 
-        val p2 = transition_freq.mapValues { (_, freq) ->
-            val sum = freq.values.sum()
-            freq.mapValues { (_, v) -> (v.toDouble() + 0.5) / (sum + 0.5 * freq.size) }
-        }
+        val p2 =
+            transition_freq.mapValues { (_, freq) ->
+                val sum = freq.values.sum()
+                freq.mapValues { (_, v) -> (v.toDouble() + 0.5) / (sum + 0.5 * freq.size) }
+            }
 
         return MarkovChain(p1, p2)
     }
 
     fun p(s: String): MuExpr = MuParser(CharInput.withTextAndPosSpans(s)).parseAll()!![0].lower()
-    fun list(vararg s: MuExpr): MuExpr =
-        MuExpr.Seq(listOf(MuExpr.Atom("list")) + s.toList())
-    fun seq(vararg s: MuExpr): MuExpr =
-        MuExpr.Seq(s.toList())
-    fun int(i: Int): MuExpr =
-        MuExpr.Integer(BigInteger.valueOf(i.toLong()))
-    fun atom(s: String): MuExpr =
-        MuExpr.Atom(s)
+
+    fun list(vararg s: MuExpr): MuExpr = MuExpr.Seq(listOf(MuExpr.Atom("list")) + s.toList())
+
+    fun seq(vararg s: MuExpr): MuExpr = MuExpr.Seq(s.toList())
+
+    fun int(i: Int): MuExpr = MuExpr.Integer(BigInteger.valueOf(i.toLong()))
+
+    fun atom(s: String): MuExpr = MuExpr.Atom(s)
+
     fun map(vararg s: Pair<MuExpr, MuExpr>): MuExpr =
         seq(atom("map"), *s.map { (k, v) -> seq(atom("pair"), k, v) }.toTypedArray())
-    fun str(s: String): MuExpr =
-        MuExpr.String(s)
 
-    @Test fun `parsing integers`() {
+    fun str(s: String): MuExpr = MuExpr.String(s)
+
+    @Test
+    fun `parsing integers`() {
         assertEquals(MuExpr.Integer(BigInteger.ONE), p("1"))
         assertEquals(MuExpr.Integer(BigInteger.valueOf(999)), p("999"))
         assertEquals(MuExpr.Integer(BigInteger.valueOf(100_000)), p("100_000"))
         assertEquals(MuExpr.Integer(BigInteger.valueOf(10_0000)), p("10_0000"))
-        assertEquals(MuExpr.Integer(BigInteger.valueOf(1_000_000_000_000_000_000)), p("1_000_000_000_000_000_000"))
-        assertEquals(MuExpr.Integer(BigInteger.valueOf(-1_000_000_000_000_000_000)), p("-1_000_000_000_000_000_000"))
-        assertEquals(MuExpr.Integer(BigInteger.valueOf(1_000_000_000_000_000_000)), p("+1_000_000_000_000_000_000"))
+        assertEquals(
+            MuExpr.Integer(BigInteger.valueOf(1_000_000_000_000_000_000)),
+            p("1_000_000_000_000_000_000"),
+        )
+        assertEquals(
+            MuExpr.Integer(BigInteger.valueOf(-1_000_000_000_000_000_000)),
+            p("-1_000_000_000_000_000_000"),
+        )
+        assertEquals(
+            MuExpr.Integer(BigInteger.valueOf(1_000_000_000_000_000_000)),
+            p("+1_000_000_000_000_000_000"),
+        )
         assertEquals(MuExpr.Integer(BigInteger.valueOf(1)), p("0001"))
     }
 
-    @Test fun `parsing reals`() {
+    @Test
+    fun `parsing reals`() {
         // "1.0", "1.0e10", "1.0e-10", "1.0e+10", "1.0E+10",
         assertEquals(MuExpr.Double(1.0), p("1.0"))
         assertEquals(MuExpr.Double(1.0), p("1.0e0"))
@@ -144,7 +155,8 @@ class MuParserSpec {
         assertEquals(MuExpr.Double(0.999_999), p("0.999_999"))
     }
 
-    @Test fun `parsing percentages`() {
+    @Test
+    fun `parsing percentages`() {
         assertEquals(MuExpr.Double(0.0), p("0%"))
         assertEquals(MuExpr.Double(0.0), p("0.0%"))
         assertEquals(MuExpr.Double(0.001), p("0.1%"))
@@ -155,7 +167,8 @@ class MuParserSpec {
         assertEquals(MuExpr.Double(2.0), p("200.0%"))
     }
 
-    @Test fun `parsing rationals`() {
+    @Test
+    fun `parsing rationals`() {
         // "1/2", "1/2_3", "1/2_3_4", "20/30",
         //        "-1/2", "+1/2",
 
@@ -167,7 +180,8 @@ class MuParserSpec {
         assertEquals(MuExpr.Rational(Rational.from(+1, 2)), p("+1/2"))
     }
 
-    @Test fun `parsing identifiers`() {
+    @Test
+    fun `parsing identifiers`() {
         // "a", "ab", "a.b", "a.b.c", "_a", ".a", "a1", "a1_", "a1_2", "abc",
         assertEquals(MuExpr.Atom("a"), p("a"))
         assertEquals(MuExpr.Atom("ab"), p("ab"))
@@ -203,7 +217,8 @@ class MuParserSpec {
         assertEquals(MuExpr.Atom("10h10m"), p("10h10m"))
     }
 
-    @Test fun `parsing lists`() {
+    @Test
+    fun `parsing lists`() {
         // "[]", "[1]", "[1 2]", "[1 2 3]",
         assertEquals(list(), p("[]"))
         assertEquals(list(int(1)), p("[1]"))
@@ -211,7 +226,8 @@ class MuParserSpec {
         assertEquals(list(int(1), int(2), int(3)), p("[1 2 3]"))
     }
 
-    @Test fun `parsing seqs`() {
+    @Test
+    fun `parsing seqs`() {
         // "(a)", "(a b)", "(a b c)", "(a (b c))", "(a (b c) d)",
         assertEquals(seq(atom("a")), p("(a)"))
         assertEquals(seq(atom("a"), atom("b")), p("(a b)"))
@@ -220,7 +236,8 @@ class MuParserSpec {
         assertEquals(seq(atom("a"), seq(atom("b"), atom("c")), atom("d")), p("(a (b c) d)"))
     }
 
-    @Test fun `parsing maps`() {
+    @Test
+    fun `parsing maps`() {
         // "{}", "{a: 1, b: 2}", "{a: 1, b: 2,}",
         assertEquals(map(), p("{}"))
         assertEquals(map(atom("a") to int(1), atom("b") to int(2)), p("{a: 1, b: 2}"))
@@ -230,20 +247,25 @@ class MuParserSpec {
         assertEquals(map(int(1) to int(2)), p("{1 : 2}"))
         assertEquals(map(int(1) to int(2), int(3) to int(4)), p("{1 : 2, 3 : 4}"))
         // "{(f x) : (g y)}",
-        assertEquals(map(seq(atom("f"), atom("x")) to seq(atom("g"), atom("y"))), p("{(f x) : (g y)}"))
+        assertEquals(
+            map(seq(atom("f"), atom("x")) to seq(atom("g"), atom("y"))),
+            p("{(f x) : (g y)}"),
+        )
         // "{[]: []}",
         assertEquals(map(list() to list()), p("{[]: []}"))
         // "(a { b: c })", "{a: (f x)}",
         assertEquals(seq(atom("a"), map(atom("b") to atom("c"))), p("(a { b: c })"))
         assertEquals(map(atom("a") to seq(atom("f"), atom("x"))), p("{a: (f x)}"))
-        // """{a: "b"}""", """{a: "b\"c"}""", """{a: "b\nc"}""", """{a: "b\\c"}""", """{a: "b\\\"c"}""",
+        // """{a: "b"}""", """{a: "b\"c"}""", """{a: "b\nc"}""", """{a: "b\\c"}""", """{a:
+        // "b\\\"c"}""",
         assertEquals(map(atom("a") to str("b")), p("""{a: "b"}"""))
         assertEquals(map(atom("a") to str("b\"c")), p("""{a: "b\"c"}"""))
         assertEquals(map(atom("a") to str("b\nc")), p("""{a: "b\nc"}"""))
         assertEquals(map(atom("a") to str("b\\c")), p("""{a: "b\\c"}"""))
     }
 
-    @Test fun `parsing strings`() {
+    @Test
+    fun `parsing strings`() {
         // "\"\"", "\"a\"", "'a'", "\"a b\"", "'abc'", "'\"'",
         assertEquals(str(""), p("\"\""))
         assertEquals(str("a"), p("\"a\""))
@@ -253,25 +275,21 @@ class MuParserSpec {
         assertEquals(str("\""), p("'\"'"))
     }
 
-    @Test fun `parsing complex`() {
+    @Test
+    fun `parsing complex`() {
         // "(max-packet-size ((λ (x) (+ x x)) 2))"
         assertEquals(
             seq(
                 atom("max-packet-size"),
-                seq(
-                    seq(
-                        atom("λ"),
-                        seq(atom("x")),
-                        seq(atom("+"), atom("x"), atom("x"))
-                    ),
-                    int(2)
-                )
+                seq(seq(atom("λ"), seq(atom("x")), seq(atom("+"), atom("x"), atom("x"))), int(2)),
             ),
-            p("(max-packet-size ((λ (x) (+ x x)) 2))")
+            p("(max-packet-size ((λ (x) (+ x x)) 2))"),
         )
     }
 
-    @Ignore @Test fun parseSpec() {
+    @Ignore
+    @Test
+    fun parseSpec() {
         fun p(s: String): MuParsedExpr? {
             try {
                 val r = MuParser(CharInput.withTextAndPosSpans(s)).parseAll()
@@ -291,118 +309,123 @@ class MuParserSpec {
             if (!fn.name.endsWith(".rkt")) continue
             val scriptText = fn.readText()
             examples.add(scriptText)
-            val scriptTree = try {
-                val r = MuParser(CharInput.withTextAndPosSpans(scriptText)).parseAll()
-                System.out.println("$fn -> $r")
-                System.out.flush()
-                r
-            } catch (e: Exception) {
-                System.err.println("$fn -> $e")
-                System.err.flush()
-                continue
-            }
+            val scriptTree =
+                try {
+                    val r = MuParser(CharInput.withTextAndPosSpans(scriptText)).parseAll()
+                    System.out.println("$fn -> $r")
+                    System.out.flush()
+                    r
+                } catch (e: Exception) {
+                    System.err.println("$fn -> $e")
+                    System.err.flush()
+                    continue
+                }
 
-//            val globalEnv = mutableMapOf<String, MuValue>()
-//
-//            globalEnv["lambda"] = MuValue.func(MuFunc(
-//                name = "lambda",
-//                args = listOf(
-//                    Arg("params", true, ArgArity.Required, null),
-//                    Arg("body", true, ArgArity.Required, null)
-//                ),
-//                capturedEnv = mapOf(),
-//                body = MuFuncBody.Native { penv, env ->
-//                    val params = (env["params"] as MuExpr.Seq).value.map { (it as MuExpr.Atom).value }
-//                    val body = env["body"] as MuExpr.Seq
-//                    val capturedVars = capturedVars(body) - params
-//                    MuValue.func(MuFunc(
-//                        name = "lambda",
-//                        args = params.map { Arg(it, false, ArgArity.Required, null) },
-//                        capturedEnv = env.filterKeys { it in capturedVars },
-//                        body = MuFuncBody.Expr(body),
-//                        unquote = false
-//                    ))
-//                },
-//                unquote = false
-//            ))
-//
-//            // Unicode version
-//            globalEnv["λ"] = globalEnv["lambda"]!!
-//
-//            fun addPrinter(name: String, args: List<String>) {
-//                globalEnv[name] = MuValue.func(MuFunc(
-//                    name = name,
-//                    args = args.map { Arg(it, false, ArgArity.Required, null) },
-//                    capturedEnv = mapOf(),
-//                    body = MuFuncBody.Native { penv, env ->
-//                        println("Printing $name")
-//                        println(args.map { env[it] }.joinToString(" "))
-//                        MuValue.nil
-//                    },
-//                    unquote = false
-//                ))
-//            }
-//
-//            globalEnv["+"] = MuValue.func(MuFunc(
-//                name = "+",
-//                args = listOf(
-//                    Arg("first", false, ArgArity.Required, null),
-//                    Arg("second", false, ArgArity.Required, null)
-//                ),
-//                capturedEnv = mapOf(),
-//                body = MuFuncBody.Native { penv, env ->
-//                    val first = (env["first"] as MuExpr.Integer).value
-//                    val second = (env["second"] as MuExpr.Integer).value
-//                    MuValue.integer(first + second)
-//                },
-//                unquote = false
-//            ))
-//
-//            globalEnv["define"] = MuValue.func(MuFunc(
-//                name = "define",
-//                args = listOf(
-//                    Arg("params", true, ArgArity.Required, null),
-//                    Arg("body", true, ArgArity.Required, null)
-//                ),
-//                capturedEnv = mapOf(),
-//                body = MuFuncBody.Native { penv, env ->
-//                    val p = env["params"]?.extract<MuExpr>() ?: throw MuException("Missing parameter list")
-//                    val body = env["body"]?.extract<MuExpr>() ?: throw MuException("Missing body")
-//                    if (p is MuExpr.Seq) {
-//                        val name = (p.value[0] as MuExpr.Atom).value
-//                        val params = p.value.drop(1).map { (it as MuExpr.Atom).value }
-//                        val capturedVars = capturedVars(body) - params
-//
-//                        val value = MuValue.func(MuFunc(
-//                            name = "lambda",
-//                            args = params.map { Arg(it, false, ArgArity.Required, null) },
-//                            capturedEnv = env.filterKeys { it in capturedVars },
-//                            body = MuFuncBody.Expr(body),
-//                            unquote = false
-//                        ))
-//                        globalEnv[name] = value
-//                        return@Native value
-//                    } else if (p is MuExpr.Atom) {
-//                        val name = (p as MuExpr.Atom).value
-//                        val value = runScript(env, body, MuValue.cls)
-//                        globalEnv[name] = value
-//                        return@Native value
-//                    } else {
-//                        throw MuException("Invalid parameter list: $p")
-//                    }
-//                },
-//                unquote = false
-//            ))
-//
-//            addPrinter("max-packet-size", listOf("size"))
-//            addPrinter("rollbar-token", listOf("token"))
-//            addPrinter("server-id", listOf("id"))
-////
-////            addPrinter("print", listOf("arg"))
+            //            val globalEnv = mutableMapOf<String, MuValue>()
+            //
+            //            globalEnv["lambda"] = MuValue.func(MuFunc(
+            //                name = "lambda",
+            //                args = listOf(
+            //                    Arg("params", true, ArgArity.Required, null),
+            //                    Arg("body", true, ArgArity.Required, null)
+            //                ),
+            //                capturedEnv = mapOf(),
+            //                body = MuFuncBody.Native { penv, env ->
+            //                    val params = (env["params"] as MuExpr.Seq).value.map { (it as
+            // MuExpr.Atom).value }
+            //                    val body = env["body"] as MuExpr.Seq
+            //                    val capturedVars = capturedVars(body) - params
+            //                    MuValue.func(MuFunc(
+            //                        name = "lambda",
+            //                        args = params.map { Arg(it, false, ArgArity.Required, null) },
+            //                        capturedEnv = env.filterKeys { it in capturedVars },
+            //                        body = MuFuncBody.Expr(body),
+            //                        unquote = false
+            //                    ))
+            //                },
+            //                unquote = false
+            //            ))
+            //
+            //            // Unicode version
+            //            globalEnv["λ"] = globalEnv["lambda"]!!
+            //
+            //            fun addPrinter(name: String, args: List<String>) {
+            //                globalEnv[name] = MuValue.func(MuFunc(
+            //                    name = name,
+            //                    args = args.map { Arg(it, false, ArgArity.Required, null) },
+            //                    capturedEnv = mapOf(),
+            //                    body = MuFuncBody.Native { penv, env ->
+            //                        println("Printing $name")
+            //                        println(args.map { env[it] }.joinToString(" "))
+            //                        MuValue.nil
+            //                    },
+            //                    unquote = false
+            //                ))
+            //            }
+            //
+            //            globalEnv["+"] = MuValue.func(MuFunc(
+            //                name = "+",
+            //                args = listOf(
+            //                    Arg("first", false, ArgArity.Required, null),
+            //                    Arg("second", false, ArgArity.Required, null)
+            //                ),
+            //                capturedEnv = mapOf(),
+            //                body = MuFuncBody.Native { penv, env ->
+            //                    val first = (env["first"] as MuExpr.Integer).value
+            //                    val second = (env["second"] as MuExpr.Integer).value
+            //                    MuValue.integer(first + second)
+            //                },
+            //                unquote = false
+            //            ))
+            //
+            //            globalEnv["define"] = MuValue.func(MuFunc(
+            //                name = "define",
+            //                args = listOf(
+            //                    Arg("params", true, ArgArity.Required, null),
+            //                    Arg("body", true, ArgArity.Required, null)
+            //                ),
+            //                capturedEnv = mapOf(),
+            //                body = MuFuncBody.Native { penv, env ->
+            //                    val p = env["params"]?.extract<MuExpr>() ?: throw
+            // MuException("Missing parameter list")
+            //                    val body = env["body"]?.extract<MuExpr>() ?: throw
+            // MuException("Missing body")
+            //                    if (p is MuExpr.Seq) {
+            //                        val name = (p.value[0] as MuExpr.Atom).value
+            //                        val params = p.value.drop(1).map { (it as MuExpr.Atom).value }
+            //                        val capturedVars = capturedVars(body) - params
+            //
+            //                        val value = MuValue.func(MuFunc(
+            //                            name = "lambda",
+            //                            args = params.map { Arg(it, false, ArgArity.Required,
+            // null) },
+            //                            capturedEnv = env.filterKeys { it in capturedVars },
+            //                            body = MuFuncBody.Expr(body),
+            //                            unquote = false
+            //                        ))
+            //                        globalEnv[name] = value
+            //                        return@Native value
+            //                    } else if (p is MuExpr.Atom) {
+            //                        val name = (p as MuExpr.Atom).value
+            //                        val value = runScript(env, body, MuValue.cls)
+            //                        globalEnv[name] = value
+            //                        return@Native value
+            //                    } else {
+            //                        throw MuException("Invalid parameter list: $p")
+            //                    }
+            //                },
+            //                unquote = false
+            //            ))
+            //
+            //            addPrinter("max-packet-size", listOf("size"))
+            //            addPrinter("rollbar-token", listOf("token"))
+            //            addPrinter("server-id", listOf("id"))
+            // //
+            // //            addPrinter("print", listOf("arg"))
 
-//            scriptTree!!
-//            for (e in scriptTree)
-//                runScript(globalEnv, e.lower(), MuValue.cls)
+            //            scriptTree!!
+            //            for (e in scriptTree)
+            //                runScript(globalEnv, e.lower(), MuValue.cls)
         }
 
         val mc = buildMarkovChain(examples)

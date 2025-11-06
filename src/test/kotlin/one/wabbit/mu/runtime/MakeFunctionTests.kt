@@ -1,79 +1,73 @@
 package one.wabbit.mu.runtime
 
+import java.math.BigInteger
+import kotlin.reflect.full.createType
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import one.wabbit.data.Right
 import one.wabbit.mu.types.MuType
 import one.wabbit.mu.types.Upcast
-import java.math.BigInteger
-import kotlin.reflect.full.createType
-import kotlin.test.*
 
 /**
  * End-to-end tests for the reflective builder helpers:
- *  - makeValueFromMember   (properties, functions; context/optional/varargs/naming/quoted)
- *  - makeInstanceFromMember (property instances, function instances, implicit resolution)
- *  - makeValueFromDataType / makeModuleInfoCtor (constructor-style value factory)
+ * - makeValueFromMember (properties, functions; context/optional/varargs/naming/quoted)
+ * - makeInstanceFromMember (property instances, function instances, implicit resolution)
+ * - makeValueFromDataType / makeModuleInfoCtor (constructor-style value factory)
  *
  * These tests lean on withNativeModule(), so we exercise the real wiring.
  */
 class MakeFunctionsTest {
-
     // --- Test fixtures -------------------------------------------------------
 
     data class Tag(val name: String)
+
     data class Tagged(val id: String)
 
     @Suppress("unused")
     class TestModule {
         // Properties
-        @Mu.Export @Mu.Const
-        val constPi: String = "π"
+        @Mu.Export @Mu.Const val constPi: String = "π"
 
-        @Mu.Export
-        val readOnly: String = "hello"
+        @Mu.Export val readOnly: String = "hello"
 
-        @Mu.Export
-        var threshold: Int = 7
+        @Mu.Export var threshold: Int = 7
 
         // Functions
-        @Mu.Export
-        fun greet(@Mu.Optional who: String?): String = who ?: "world"
+        @Mu.Export fun greet(@Mu.Optional who: String?): String = who ?: "world"
+
+        @Mu.Export fun sum(@Mu.ZeroOrMore xs: List<Int>): Int = xs.sum()
+
+        @Mu.Export fun product(@Mu.OneOrMore xs: List<Int>): Int = xs.reduce { a, b -> a * b }
+
+        @Mu.Export fun renamed(@Mu.Name("value") v: String): String = v
+
+        @Mu.Export fun quoted(@Mu.Quoted code: String): String = code
 
         @Mu.Export
-        fun sum(@Mu.ZeroOrMore xs: List<Int>): Int = xs.sum()
-
-        @Mu.Export
-        fun product(@Mu.OneOrMore xs: List<Int>): Int = xs.reduce { a, b -> a * b }
-
-        @Mu.Export
-        fun renamed(@Mu.Name("value") v: String): String = v
-
-        @Mu.Export
-        fun quoted(@Mu.Quoted code: String): String = code
-
-        @Mu.Export
-        fun define(@Mu.Context ctx: MuStdContext, @Mu.Name("x") x: Int): Pair<MuStdContext, MuStdValue> {
+        fun define(
+            @Mu.Context ctx: MuStdContext,
+            @Mu.Name("x") x: Int,
+        ): Pair<MuStdContext, MuStdValue> {
             val value = MuStdContext.liftInteger(ctx, BigInteger.valueOf(x.toLong()))
             return ctx.withLocal("x", value) to value
         }
 
-        @Mu.Export
-        fun sum2(a: Int, b: Int): Int = a + b // both required
+        @Mu.Export fun sum2(a: Int, b: Int): Int = a + b // both required
 
         // Instances
-        @Mu.Instance
-        val tagInstance: Tag = Tag("default")
+        @Mu.Instance val tagInstance: Tag = Tag("default")
 
-        @Mu.Instance
-        fun taggedFromName(name: String): Tagged = Tagged(name)
+        @Mu.Instance fun taggedFromName(name: String): Tagged = Tagged(name)
 
-        @Mu.Export
-        fun useTag(@Mu.Instance tag: Tag): String = tag.name
+        @Mu.Export fun useTag(@Mu.Instance tag: Tag): String = tag.name
 
-        @Mu.Export
-        fun useTagged(@Mu.Instance t: Tagged): String = t.id
+        @Mu.Export fun useTagged(@Mu.Instance t: Tagged): String = t.id
 
-        @Mu.Instance
-        fun <A> upcastNullable(): Upcast<A, A?> = Upcast.id()
+        @Mu.Instance fun <A> upcastNullable(): Upcast<A, A?> = Upcast.id()
     }
 
     private fun ctxWith(module: TestModule = TestModule()): MuStdContext =
@@ -83,18 +77,29 @@ class MakeFunctionsTest {
         ctx.modules["test"]?.definitions?.get(name) ?: error("Export not found: $name")
 
     private fun rawFunc(v: MuStdValue): MuStdFunc =
-        (v.unsafeValue as? MuStdFunc) ?: error("Value is not a MuStdFunc; got ${v.unsafeValue!!::class}")
+        (v.unsafeValue as? MuStdFunc)
+            ?: error("Value is not a MuStdFunc; got ${v.unsafeValue!!::class}")
 
-    private fun run(ctx: MuStdContext, v: MuStdValue, args: Map<String, MuStdValue> = emptyMap()): Pair<MuStdContext, MuStdValue> =
-        rawFunc(v).run(ctx, args)
+    private fun run(
+        ctx: MuStdContext,
+        v: MuStdValue,
+        args: Map<String, MuStdValue> = emptyMap(),
+    ): Pair<MuStdContext, MuStdValue> = rawFunc(v).run(ctx, args)
 
-    private val intType get() = MuType.fromKType(Int::class.createType()) as MuType.Constructor
-    private val strType get() = MuType.fromKType(String::class.createType()) as MuType.Constructor
+    private val intType
+        get() = MuType.fromKType(Int::class.createType()) as MuType.Constructor
+
+    private val strType
+        get() = MuType.fromKType(String::class.createType()) as MuType.Constructor
+
     private fun listOfType(elem: MuType) = MuType.List(elem)
 
     private fun intMu(i: Int) = MuStdValue.unsafeLift(i, intType)
+
     private fun strMu(s: String) = MuStdValue.unsafeLift(s, strType)
+
     private fun listIntMu(xs: List<Int>) = MuStdValue.unsafeLift(xs, listOfType(intType))
+
     private fun listStrMu(xs: List<String>) = MuStdValue.unsafeLift(xs, listOfType(strType))
 
     // --- makeValueFromMember: properties ------------------------------------
@@ -202,9 +207,10 @@ class MakeFunctionsTest {
     fun missing_required_argument_throws() {
         val ctx = ctxWith()
         val fn = getExport(ctx, "sum2")
-        val ex = assertFailsWith<MissingRequiredArgumentException> {
-            run(ctx, fn, mapOf("a" to intMu(2))) // missing b
-        }
+        val ex =
+            assertFailsWith<MissingRequiredArgumentException> {
+                run(ctx, fn, mapOf("a" to intMu(2))) // missing b
+            }
         assertTrue(ex.message?.contains("Missing required argument") == true)
     }
 
@@ -212,9 +218,10 @@ class MakeFunctionsTest {
     fun type_mismatch_throws() {
         val ctx = ctxWith()
         val fn = getExport(ctx, "renamed")
-        val ex = assertFailsWith<TypeMismatchInArgumentException> {
-            run(ctx, fn, mapOf("value" to intMu(42))) // expects String
-        }
+        val ex =
+            assertFailsWith<TypeMismatchInArgumentException> {
+                run(ctx, fn, mapOf("value" to intMu(42))) // expects String
+            }
         assertTrue(ex.message?.contains("Type mismatch in argument") == true)
     }
 
@@ -232,7 +239,10 @@ class MakeFunctionsTest {
 
         val taggedInsts = ctx.instances[taggedHead]
         assertNotNull(taggedInsts)
-        assertTrue(taggedInsts!!.isNotEmpty(), "Expected a Tagged instance to be registered (function instance)")
+        assertTrue(
+            taggedInsts!!.isNotEmpty(),
+            "Expected a Tagged instance to be registered (function instance)",
+        )
 
         // Function instance should declare one String parameter
         val stringType = strType
@@ -251,64 +261,64 @@ class MakeFunctionsTest {
 
     // --- makeValueFromDataType / makeModuleInfoCtor -------------------------
 
-//    @Test
-//    fun module_info_ctor_minimal_uses_defaults() {
-//        val ctx = ctxWith()
-//        val ctor = makeModuleInfoCtor() // exportName default "ModuleInfo"
-//        val (_, out) = run(ctx, ctor, mapOf(
-//            "name" to strMu("core"),
-//            "version" to strMu("1.0.0")
-//        ))
-//        val mi = out.unsafeValue as ModuleInfo
-//        assertEquals(ModuleInfo(name = "core", version = "1.0.0"), mi)
-//    }
-//
-//    @Test
-//    fun module_info_ctor_full_all_fields() {
-//        val ctx = ctxWith()
-//        val ctor = makeModuleInfoCtor()
-//        val (_, out) = run(ctx, ctor, mapOf(
-//            "name" to strMu("analytics"),
-//            "version" to strMu("2.3.1"),
-//            "description" to strMu("Collects and ships metrics"),
-//            "author" to strMu("Wabbit Inc."),
-//            "dependencies" to listStrMu(listOf("core", "http")),
-//            "softDependencies" to listStrMu(listOf("ui"))
-//        ))
-//        val mi = out.unsafeValue as ModuleInfo
-//        assertEquals(
-//            ModuleInfo(
-//                name = "analytics",
-//                version = "2.3.1",
-//                description = "Collects and ships metrics",
-//                author = "Wabbit Inc.",
-//                dependencies = listOf("core", "http"),
-//                softDependencies = listOf("ui")
-//            ),
-//            mi
-//        )
-//    }
-//
-//    @Test
-//    fun module_info_ctor_missing_required_throws() {
-//        val ctx = ctxWith()
-//        val ctor = makeModuleInfoCtor()
-//        val ex = assertFailsWith<IllegalStateException> {
-//            run(ctx, ctor, mapOf("name" to strMu("oops"))) // missing version
-//        }
-//        assertTrue(ex.message?.contains("Missing required argument: version") == true)
-//    }
-//
-//    @Test
-//    fun module_info_ctor_type_mismatch_throws() {
-//        val ctx = ctxWith()
-//        val ctor = makeModuleInfoCtor()
-//        val ex = assertFailsWith<IllegalStateException> {
-//            run(ctx, ctor, mapOf(
-//                "name" to intMu(123),              // should be String
-//                "version" to strMu("1.0.0")
-//            ))
-//        }
-//        assertTrue(ex.message?.contains("Type mismatch in argument name") == true)
-//    }
+    //    @Test
+    //    fun module_info_ctor_minimal_uses_defaults() {
+    //        val ctx = ctxWith()
+    //        val ctor = makeModuleInfoCtor() // exportName default "ModuleInfo"
+    //        val (_, out) = run(ctx, ctor, mapOf(
+    //            "name" to strMu("core"),
+    //            "version" to strMu("1.0.0")
+    //        ))
+    //        val mi = out.unsafeValue as ModuleInfo
+    //        assertEquals(ModuleInfo(name = "core", version = "1.0.0"), mi)
+    //    }
+    //
+    //    @Test
+    //    fun module_info_ctor_full_all_fields() {
+    //        val ctx = ctxWith()
+    //        val ctor = makeModuleInfoCtor()
+    //        val (_, out) = run(ctx, ctor, mapOf(
+    //            "name" to strMu("analytics"),
+    //            "version" to strMu("2.3.1"),
+    //            "description" to strMu("Collects and ships metrics"),
+    //            "author" to strMu("Wabbit Inc."),
+    //            "dependencies" to listStrMu(listOf("core", "http")),
+    //            "softDependencies" to listStrMu(listOf("ui"))
+    //        ))
+    //        val mi = out.unsafeValue as ModuleInfo
+    //        assertEquals(
+    //            ModuleInfo(
+    //                name = "analytics",
+    //                version = "2.3.1",
+    //                description = "Collects and ships metrics",
+    //                author = "Wabbit Inc.",
+    //                dependencies = listOf("core", "http"),
+    //                softDependencies = listOf("ui")
+    //            ),
+    //            mi
+    //        )
+    //    }
+    //
+    //    @Test
+    //    fun module_info_ctor_missing_required_throws() {
+    //        val ctx = ctxWith()
+    //        val ctor = makeModuleInfoCtor()
+    //        val ex = assertFailsWith<IllegalStateException> {
+    //            run(ctx, ctor, mapOf("name" to strMu("oops"))) // missing version
+    //        }
+    //        assertTrue(ex.message?.contains("Missing required argument: version") == true)
+    //    }
+    //
+    //    @Test
+    //    fun module_info_ctor_type_mismatch_throws() {
+    //        val ctx = ctxWith()
+    //        val ctor = makeModuleInfoCtor()
+    //        val ex = assertFailsWith<IllegalStateException> {
+    //            run(ctx, ctor, mapOf(
+    //                "name" to intMu(123),              // should be String
+    //                "version" to strMu("1.0.0")
+    //            ))
+    //        }
+    //        assertTrue(ex.message?.contains("Type mismatch in argument name") == true)
+    //    }
 }

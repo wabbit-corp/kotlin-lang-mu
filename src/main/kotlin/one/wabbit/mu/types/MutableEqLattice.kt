@@ -1,11 +1,13 @@
 package one.wabbit.mu.types
 
-class MutableEqLattice<From, To> private constructor(
+class MutableEqLattice<From, To>
+private constructor(
     private val e2c: MutableMap<From, Int>,
     private val c2c: MutableMap<Int, Int>,
     private val c2r: MutableMap<Int, To>,
 ) {
     constructor() : this(mutableMapOf(), mutableMapOf(), mutableMapOf())
+
     constructor(vararg lists: List<From>) : this() {
         for (list in lists) {
             for (i in 1 until list.size) {
@@ -14,11 +16,8 @@ class MutableEqLattice<From, To> private constructor(
         }
     }
 
-    fun copy(): MutableEqLattice<From, To> = MutableEqLattice(
-        e2c.toMutableMap(),
-        c2c.toMutableMap(),
-        c2r.toMutableMap()
-    )
+    fun copy(): MutableEqLattice<From, To> =
+        MutableEqLattice(e2c.toMutableMap(), c2c.toMutableMap(), c2r.toMutableMap())
 
     private fun getCluster(e: From): Int? {
         val r0 = e2c[e] ?: return null
@@ -89,7 +88,9 @@ class MutableEqLattice<From, To> private constructor(
             }
             // if both non-null and different, we *could* attempt to reconcile here,
             // but we let the higher-level unifier deal with it; at minimum, don't lose both.
-            else -> { /* keep vLarge if present */ }
+            else -> {
+                /* keep vLarge if present */
+            }
         }
         // Optional: clear old slot to keep map tidy
         if (vSmall != null) c2r.remove(small)
@@ -115,17 +116,14 @@ class MutableEqLattice<From, To> private constructor(
             clusters.getOrPut(cluster) { mutableListOf() }.add(e)
             if (r != null) representatives[cluster] = r
         }
-        return clusters.map { (c, es) ->
-            es to representatives[c]
-        }
+        return clusters.map { (c, es) -> es to representatives[c] }
     }
 
-    override fun toString(): String {
-        return toList().joinToString("; ", "EqMap(", ")") {
+    override fun toString(): String =
+        toList().joinToString("; ", "EqMap(", ")") {
             val (es, r) = it
             val esStr = es.joinToString(", ", "[", "]")
             val rStr = r?.toString() ?: "null"
             "$esStr -> $rStr"
         }
-    }
 }

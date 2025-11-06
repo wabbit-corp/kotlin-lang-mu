@@ -2,26 +2,35 @@
 
 package one.wabbit.mu
 
+import java.math.BigInteger
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import one.wabbit.data.rightOrNull
-import one.wabbit.mu.runtime.*
+import one.wabbit.mu.runtime.ArgArity
+import one.wabbit.mu.runtime.Mu
+import one.wabbit.mu.runtime.MuStdContext
+import one.wabbit.mu.runtime.MuStdFunc
+import one.wabbit.mu.runtime.makeValueFromMember
 import one.wabbit.mu.types.MuType
 import one.wabbit.mu.types.TypeVariable
-import java.math.BigInteger
-import kotlin.test.*
 
 class MuStdContextSpec {
-
     object BasicTestModule {
         @Mu.Export("PI") @Mu.Const val piValue = 3.14
+
         @Mu.Export var counter = 100
+
         @Mu.Export fun greet(name: String): String = "Hello, $name!"
+
         @Mu.Export("addInts") fun add(a: Int, b: Int): Int = a + b
     }
 
     @Test
     fun `register basic module`() {
-        val context = MuStdContext.empty()
-            .withNativeModule("basic", BasicTestModule)
+        val context = MuStdContext.empty().withNativeModule("basic", BasicTestModule)
 
         // Check module registration
         assertTrue(context.modules.containsKey("basic"))
@@ -69,20 +78,23 @@ class MuStdContextSpec {
 
     class AdvancedTestModule {
         @Mu.Export fun <T> identity(value: T): T = value // Generic function
-        @Mu.Export fun processOptional(
-            @Mu.Name("opt") @Mu.Optional value: String?
-        ): String = value ?: "Default"
 
-        @Mu.Export fun sumVarargs(
-            @Mu.Name("nums") @Mu.ZeroOrMore values: List<BigInteger>
-        ): BigInteger = values.fold(BigInteger.ZERO, BigInteger::add)
+        @Mu.Export
+        fun processOptional(@Mu.Name("opt") @Mu.Optional value: String?): String =
+            value ?: "Default"
 
-        @Mu.Export fun processList(@Mu.Name("items") @Mu.OneOrMore values: List<String>): String =
+        @Mu.Export
+        fun sumVarargs(@Mu.Name("nums") @Mu.ZeroOrMore values: List<BigInteger>): BigInteger =
+            values.fold(BigInteger.ZERO, BigInteger::add)
+
+        @Mu.Export
+        fun processList(@Mu.Name("items") @Mu.OneOrMore values: List<String>): String =
             values.joinToString("-")
 
-        @Mu.Export fun requiresContext(
+        @Mu.Export
+        fun requiresContext(
             @Mu.Context ctx: MuStdContext,
-            @Mu.Name("arg") value: String
+            @Mu.Name("arg") value: String,
         ): Pair<MuStdContext, String> {
             val file = ctx.currentFile()?.name ?: "unknown"
             return ctx to "Arg '$value' processed in context of file '$file'"
@@ -91,12 +103,19 @@ class MuStdContextSpec {
 
     @Test
     fun `register advanced module`() {
-        val context = MuStdContext.empty()
-            .withNativeModule("adv", AdvancedTestModule()) // Note: Need instance for non-object module
+        val context =
+            MuStdContext.empty()
+                .withNativeModule(
+                    "adv",
+                    AdvancedTestModule(),
+                ) // Note: Need instance for non-object module
 
         assertTrue(context.modules.containsKey("adv"))
         val module = context.modules["adv"]!!
-        assertEquals(setOf("identity", "processOptional", "sumVarargs", "processList", "requiresContext"), module.definitions.keys)
+        assertEquals(
+            setOf("identity", "processOptional", "sumVarargs", "processList", "requiresContext"),
+            module.definitions.keys,
+        )
 
         // Check identity (Generic Function)
         val idFunc = module.definitions["identity"]?.unsafeValue as? MuStdFunc
@@ -137,30 +156,33 @@ class MuStdContextSpec {
         assertEquals(MuType.String, ctxFunc.parameters[0].type)
     }
 
-    interface Show<A> { fun show(a: A): String }
+    interface Show<A> {
+        fun show(a: A): String
+    }
+
     class InstanceTestModule {
         @Mu.Instance
-        val showBigInt = object : Show<BigInteger> {
-            override fun show(a: BigInteger): String = "BigInt($a)"
-        }
+        val showBigInt =
+            object : Show<BigInteger> {
+                override fun show(a: BigInteger): String = "BigInt($a)"
+            }
 
         @Mu.Instance
-        fun <A> showList(elemShow: Show<A>) = object : Show<List<A>> {
-            override fun show(a: List<A>): String =
-                a.joinToString(", ", "[", "]") { elemShow.show(it) }
-        }
+        fun <A> showList(elemShow: Show<A>) =
+            object : Show<List<A>> {
+                override fun show(a: List<A>): String =
+                    a.joinToString(", ", "[", "]") { elemShow.show(it) }
+            }
 
         // Requires Show<A> implicitly
         @Mu.Export
-        fun <A> print(@Mu.Name("value") value: A, @Mu.Instance showInstance: Show<A>): String {
-            return "Printing: ${showInstance.show(value)}"
-        }
+        fun <A> print(@Mu.Name("value") value: A, @Mu.Instance showInstance: Show<A>): String =
+            "Printing: ${showInstance.show(value)}"
     }
 
     @Test
     fun `register instance module`() {
-        val context = MuStdContext.empty()
-            .withNativeModule("inst", InstanceTestModule())
+        val context = MuStdContext.empty().withNativeModule("inst", InstanceTestModule())
 
         val tcName = Show::class.qualifiedName!!
 
@@ -170,8 +192,10 @@ class MuStdContextSpec {
         // We expect 2 instances: Show<BigInteger> and the generic Show<List<A>>
         assertEquals(2, showInstancesSimple.size)
 
-        val showBigIntInstance = showInstancesSimple.find { it.parameters.isEmpty() && it.returnType.args == listOf(
-            MuType.BigInteger)}
+        val showBigIntInstance =
+            showInstancesSimple.find {
+                it.parameters.isEmpty() && it.returnType.args == listOf(MuType.BigInteger)
+            }
         assertNotNull(showBigIntInstance, "Show<BigInteger> instance not found")
 
         val showListInstance = showInstancesSimple.find { it.parameters.size == 1 }
@@ -182,14 +206,18 @@ class MuStdContextSpec {
         assertEquals(listOf(MuType.Use(TypeVariable("A"))), showListInstance.parameters[0].args)
         assertEquals(tcName, showListInstance.returnType.head) // Returns Show<List<A>>
         assertEquals(1, showListInstance.returnType.args.size)
-        assertEquals(MuType.List(MuType.Use(TypeVariable("A"))), showListInstance.returnType.args[0])
+        assertEquals(
+            MuType.List(MuType.Use(TypeVariable("A"))),
+            showListInstance.returnType.args[0],
+        )
 
         // Check export that uses instance
         val printFunc = context.resolve("inst/print").rightOrNull()?.unsafeValue as? MuStdFunc
         assertNotNull(printFunc)
         assertEquals(1, printFunc.typeParameters.size) // <A>
         assertEquals(1, printFunc.parameters.size) // the 'value: A' parameter
-        // The implicit @Instance parameter `showInstance: Show<A>` is handled by the solver, not listed here.
+        // The implicit @Instance parameter `showInstance: Show<A>` is handled by the solver, not
+        // listed here.
 
         // TODO: Add tests using evaluateMu to check if instance resolution works at runtime
     }
@@ -197,11 +225,13 @@ class MuStdContextSpec {
     class ErrorCaseModule {
         @Mu.Export("both") @Mu.Instance val bad = 1 // Error: Both Export and Instance
 
-        @Mu.Export fun invalidOptional(@Mu.Optional value: String) = value // Error: Optional on non-nullable
+        @Mu.Export
+        fun invalidOptional(@Mu.Optional value: String) = value // Error: Optional on non-nullable
     }
 
     object ErrorCase2 {
         @Mu.Export fun duplicate(a: Int) = a
+
         @Mu.Export("duplicate") fun duplicateRenamed(a: Int) = a // Error: Duplicate export name
     }
 
@@ -210,23 +240,32 @@ class MuStdContextSpec {
         val context = MuStdContext.empty()
 
         // Error: Both @Export and @Instance
-        assertFailsWith<IllegalArgumentException>("Should throw when both @Export and @Instance present") {
+        assertFailsWith<IllegalArgumentException>(
+            "Should throw when both @Export and @Instance present"
+        ) {
             context.withNativeModule("err1", ErrorCaseModule())
         }
 
-//        // Error: Duplicate export name (manual test, as order might affect which one throws)
-//        // This depends on how KClass.members orders overloaded/identically named members
-//        // A robust implementation should detect this explicitly.
-//        // Let's assume for now the check might be missing or unreliable via simple registration order.
-//        assertFailsWith<MuException>("Should throw on duplicate export name") {
-//            context.withNativeModule("err2", ErrorCase2) // This might not throw if check is missing
-//        }
+        //        // Error: Duplicate export name (manual test, as order might affect which one
+        // throws)
+        //        // This depends on how KClass.members orders overloaded/identically named members
+        //        // A robust implementation should detect this explicitly.
+        //        // Let's assume for now the check might be missing or unreliable via simple
+        // registration order.
+        //        assertFailsWith<MuException>("Should throw on duplicate export name") {
+        //            context.withNativeModule("err2", ErrorCase2) // This might not throw if check
+        // is missing
+        //        }
 
         // Error: @Optional on non-nullable type
         // This check might happen during MuType.fromKType or later during validation
-        assertFailsWith<IllegalArgumentException>("Should throw when @Optional is on non-nullable") {
-            // Need to isolate the specific function registration if the module registration fails early
-            // This test case might be hard to trigger directly via withNativeModule if other errors happen first
+        assertFailsWith<IllegalArgumentException>(
+            "Should throw when @Optional is on non-nullable"
+        ) {
+            // Need to isolate the specific function registration if the module registration fails
+            // early
+            // This test case might be hard to trigger directly via withNativeModule if other errors
+            // happen first
             // Requires more fine-grained testing of makeValueFromMember if needed.
             val module = ErrorCaseModule()
             val member = module::class.members.first { it.name == "invalidOptional" }

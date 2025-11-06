@@ -8,18 +8,16 @@ data class Instance<V>(
     val returnType: MuType.Constructor,
     val get: (List<V>) -> V,
 ) {
-    override fun toString(): String {
-        return buildString {
-            if (typeParameters.isNotEmpty()) {
-                append("∀ ")
-                append(typeParameters.joinToString(", "))
-                append(". ")
-            }
-            if (parameters.isNotEmpty()) {
-                append(parameters.joinToString(", ") { F.format(it) })
-                append(" -> ")
-            }
-            append(F.format(returnType))
+    override fun toString(): String = buildString {
+        if (typeParameters.isNotEmpty()) {
+            append("∀ ")
+            append(typeParameters.joinToString(", "))
+            append(". ")
         }
+        if (parameters.isNotEmpty()) {
+            append(parameters.joinToString(", ") { F.format(it) })
+            append(" -> ")
+        }
+        append(F.format(returnType))
     }
 }

@@ -1,27 +1,44 @@
 package one.wabbit.mu.runtime
 
-import kotlinx.collections.immutable.*
-import one.wabbit.levenshtein.levenshtein
-import one.wabbit.math.Rational
-import one.wabbit.data.Either
-import one.wabbit.data.Left
-import one.wabbit.data.Right
-import one.wabbit.mu.InternalMuApi
-import one.wabbit.mu.ast.MuExpr
-import one.wabbit.mu.types.*
 import java.io.File
 import java.lang.reflect.InvocationTargetException
 import java.math.BigInteger
-import kotlin.reflect.*
+import kotlin.reflect.KCallable
+import kotlin.reflect.KClass
+import kotlin.reflect.KFunction
+import kotlin.reflect.KMutableProperty
+import kotlin.reflect.KParameter
+import kotlin.reflect.KProperty
 import kotlin.reflect.full.createType
 import kotlin.reflect.full.primaryConstructor
 import kotlin.reflect.jvm.isAccessible
-
-
+import kotlinx.collections.immutable.ImmutableMap
+import kotlinx.collections.immutable.PersistentList
+import kotlinx.collections.immutable.PersistentMap
+import kotlinx.collections.immutable.PersistentSet
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.collections.immutable.persistentSetOf
+import one.wabbit.data.Either
+import one.wabbit.data.Left
+import one.wabbit.data.Right
+import one.wabbit.levenshtein.levenshtein
+import one.wabbit.math.Rational
+import one.wabbit.mu.InternalMuApi
+import one.wabbit.mu.ast.MuExpr
+import one.wabbit.mu.types.Instance
+import one.wabbit.mu.types.MuLiteralInt
+import one.wabbit.mu.types.MuLiteralString
+import one.wabbit.mu.types.MuType
+import one.wabbit.mu.types.TypeFormatter
+import one.wabbit.mu.types.TypeVariable
+import one.wabbit.mu.types.TyperState
+import one.wabbit.mu.types.Upcast
 
 sealed interface MuIO<R> {
-    data class Scoped<R>(val nested: MuIO<R>): MuIO<R>
-    data class SetLocal<R>(val name: String, val value: MuStdValue): MuIO<R>
+    data class Scoped<R>(val nested: MuIO<R>) : MuIO<R>
+
+    data class SetLocal<R>(val name: String, val value: MuStdValue) : MuIO<R>
 }
 
 object Mu {
@@ -35,7 +52,7 @@ object Mu {
 
     @Retention(AnnotationRetention.RUNTIME)
     @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY, AnnotationTarget.VALUE_PARAMETER)
-    annotation class Instance()
+    annotation class Instance
 
     @Retention(AnnotationRetention.RUNTIME)
     @Target(AnnotationTarget.VALUE_PARAMETER)
@@ -43,7 +60,7 @@ object Mu {
 
     @Retention(AnnotationRetention.RUNTIME)
     @Target(AnnotationTarget.VALUE_PARAMETER)
-    annotation class Context()
+    annotation class Context
 
     @Retention(AnnotationRetention.RUNTIME)
     @Target(AnnotationTarget.PROPERTY)
@@ -77,7 +94,7 @@ data class MuStdFunc(
 
 private fun collectImplicitGoals(
     state: TyperState<MuStdValue>,
-    args: List<MuStdValue>
+    args: List<MuStdValue>,
 ): List<MuType.Constructor> {
     val goals = mutableListOf<MuType.Constructor>()
     for (arg in args) {
@@ -89,18 +106,22 @@ private fun collectImplicitGoals(
     return goals
 }
 
-@InternalMuApi fun makeInstanceFromMember(jvmModuleRef: Any, member: KCallable<*>): Instance<MuStdValue> {
+@InternalMuApi
+fun makeInstanceFromMember(jvmModuleRef: Any, member: KCallable<*>): Instance<MuStdValue> {
     when (member) {
         is KProperty -> {
             val returnType = MuType.fromKType(member.returnType)
             require(member !is KMutableProperty<*>) { "Instance property must be read-only" }
-            require(returnType is MuType.Constructor) { "Instance property type must be a MuType.Constructor" }
+            require(returnType is MuType.Constructor) {
+                "Instance property type must be a MuType.Constructor"
+            }
             return Instance(emptyList(), emptyList(), returnType) {
-                val result = try {
-                    member.call(jvmModuleRef)
-                } catch (e: InvocationTargetException) {
-                    throw e.targetException
-                }
+                val result =
+                    try {
+                        member.call(jvmModuleRef)
+                    } catch (e: InvocationTargetException) {
+                        throw e.targetException
+                    }
                 MuStdValue.unsafeLift(result, returnType)
             }
         }
@@ -111,17 +132,21 @@ private fun collectImplicitGoals(
             for (p in member.parameters) {
                 if (p.kind == KParameter.Kind.INSTANCE) continue
                 val type = MuType.fromKType(p.type, typeParameters.toSet())
-                require(type is MuType.Constructor) { "Instance parameter must be a MuType.Constructor" }
+                require(type is MuType.Constructor) {
+                    "Instance parameter must be a MuType.Constructor"
+                }
                 parameters.add(type)
             }
             val returnType = MuType.fromKType(member.returnType, typeParameters.toSet())
             require(returnType is MuType.Constructor)
-            return Instance(typeParameters.map { TypeVariable(it.name) }, parameters, returnType) { args: List<MuStdValue> ->
-                val result = try {
-                    member.call(jvmModuleRef, *args.map { it.unsafeValue }.toTypedArray())
-                } catch (e: InvocationTargetException) {
-                    throw e.targetException
-                }
+            return Instance(typeParameters.map { TypeVariable(it.name) }, parameters, returnType) {
+                args: List<MuStdValue> ->
+                val result =
+                    try {
+                        member.call(jvmModuleRef, *args.map { it.unsafeValue }.toTypedArray())
+                    } catch (e: InvocationTargetException) {
+                        throw e.targetException
+                    }
                 MuStdValue.unsafeLift(result, returnType)
             }
         }
@@ -132,19 +157,16 @@ private fun collectImplicitGoals(
     }
 }
 
-@InternalMuApi fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: KCallable<*>): MuStdValue {
+@InternalMuApi
+fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: KCallable<*>): MuStdValue {
     when (member) {
         is KMutableProperty -> {
             val propertyType = MuType.fromKType(member.returnType)
-            val args = listOf(Arg<MuStdValue>("value", false, ArgArity.Optional, propertyType.nullable()))
+            val args =
+                listOf(Arg<MuStdValue>("value", false, ArgArity.Optional, propertyType.nullable()))
 
             member.isAccessible = true
-            return MuStdValue.func(
-                exportName,
-                emptyList(),
-                args,
-                propertyType
-            ) { ctx, argMap ->
+            return MuStdValue.func(exportName, emptyList(), args, propertyType) { ctx, argMap ->
                 val value = argMap["value"]
                 val oldValue = member.getter.call(jvmModuleRef)
                 if (value == null) {
@@ -155,17 +177,17 @@ private fun collectImplicitGoals(
                 try {
                     state.unify(propertyType, value.type)
                 } catch (e: Throwable) {
-                    val (_, r) = state.resolve(
-                        listOf(
-                            MuType.Constructor(
-                                Upcast.TypeName,
-                                listOf(value.type, propertyType)
+                    val (_, r) =
+                        state.resolve(
+                            listOf(
+                                MuType.Constructor(
+                                    Upcast.TypeName,
+                                    listOf(value.type, propertyType),
+                                )
                             )
                         )
-                    )
 
-                    @Suppress("UNCHECKED_CAST")
-                    val upcast = r[0].unsafeValue as Upcast<Any?, Any?>
+                    @Suppress("UNCHECKED_CAST") val upcast = r[0].unsafeValue as Upcast<Any?, Any?>
                     member.setter.call(jvmModuleRef, upcast(value.unsafeValue))
                     return@func ctx to MuStdValue.unsafeLift(oldValue, propertyType)
                 }
@@ -180,12 +202,9 @@ private fun collectImplicitGoals(
             val isConst = member.annotations.any { it is Mu.Const }
             if (!isConst) {
                 member.isAccessible = true
-                return MuStdValue.func(
-                    exportName,
-                    emptyList(),
-                    emptyList(),
-                    propertyType
-                ) { ctx, argMap ->
+                return MuStdValue.func(exportName, emptyList(), emptyList(), propertyType) {
+                    ctx,
+                    argMap ->
                     val result = member.getter.call(jvmModuleRef)
                     ctx to MuStdValue.unsafeLift(result, propertyType)
                 }
@@ -221,29 +240,40 @@ private fun collectImplicitGoals(
 
                 if (p.annotations.find { it is Mu.Instance } != null) {
                     val type = MuType.fromKType(p.type, typeParameters.toSet())
-                    require(type is MuType.Constructor) { "Instance parameter must be a MuType.Constructor" }
+                    require(type is MuType.Constructor) {
+                        "Instance parameter must be a MuType.Constructor"
+                    }
                     implicits.add(type)
                     continue
                 }
 
                 val type = MuType.fromKType(p.type, typeParameters.toSet())
 
-                val name = p.annotations.firstOrNull { it is Mu.Name }?.let { it as Mu.Name }?.name ?: p.name
+                val name =
+                    p.annotations.firstOrNull { it is Mu.Name }?.let { it as Mu.Name }?.name
+                        ?: p.name
 
                 val isQuoted = p.annotations.any { it is Mu.Quoted }
 
                 val arity =
-                    if (p.annotations.any { it is Mu.Optional }) ArgArity.Optional
-                    else if (p.annotations.any { it is Mu.ZeroOrMore }) ArgArity.ZeroOrMore
-                    else if (p.annotations.any { it is Mu.OneOrMore }) ArgArity.OneOrMore
-                    else ArgArity.Required
+                    if (p.annotations.any { it is Mu.Optional }) {
+                        ArgArity.Optional
+                    } else if (p.annotations.any { it is Mu.ZeroOrMore }) {
+                        ArgArity.ZeroOrMore
+                    } else if (p.annotations.any { it is Mu.OneOrMore }) {
+                        ArgArity.OneOrMore
+                    } else {
+                        ArgArity.Required
+                    }
 
                 if (arity == ArgArity.Optional) {
                     require(p.type.isMarkedNullable) { "Optional argument $name must be nullable" }
                 }
 
                 if (arity == ArgArity.ZeroOrMore || arity == ArgArity.OneOrMore) {
-                    require(p.type.classifier == List::class) { "Vararg argument $name must be a List" }
+                    require(p.type.classifier == List::class) {
+                        "Vararg argument $name must be a List"
+                    }
                 }
 
                 parameters.add(Arg(name!!, isQuoted, arity, type))
@@ -265,7 +295,7 @@ private fun collectImplicitGoals(
                 exportName,
                 typeParameters.map { TypeVariable(it.name) },
                 parameters,
-                resultType
+                resultType,
             ) { ctx, argMap ->
                 val args = mutableListOf<MuStdValue?>()
                 parameters.mapTo(args) { argMap[it.name] }
@@ -283,14 +313,15 @@ private fun collectImplicitGoals(
                             state.unify(param.type, arg.type)
                         } catch (e: Throwable) {
                             try {
-                                val (_, r) = state.resolve(
-                                    listOf(
-                                        MuType.Constructor(
-                                            Upcast.TypeName,
-                                            listOf(arg.type, param.type)
+                                val (_, r) =
+                                    state.resolve(
+                                        listOf(
+                                            MuType.Constructor(
+                                                Upcast.TypeName,
+                                                listOf(arg.type, param.type),
+                                            )
                                         )
                                     )
-                                )
 
                                 @Suppress("UNCHECKED_CAST")
                                 val upcast = r[0].unsafeValue as Upcast<Any?, Any?>
@@ -301,7 +332,9 @@ private fun collectImplicitGoals(
                                     param.name,
                                     param.type,
                                     arg.type,
-                                    "No implicit Upcast[${TypeFormatter.default.format(arg.type)} <:< ${TypeFormatter.default.format(param.type)}] was found"
+                                    "No implicit Upcast[${TypeFormatter.default.format(
+                                        arg.type
+                                    )} <:< ${TypeFormatter.default.format(param.type)}] was found",
                                 )
                             }
                         }
@@ -323,11 +356,12 @@ private fun collectImplicitGoals(
 
                 val resultType1 = resultType.subst(statePostResolution.lattice)
 
-                val result = try {
-                    member.call(jvmModuleRef, *args.map { it?.unsafeValue }.toTypedArray())
-                } catch (e: InvocationTargetException) {
-                    throw e.targetException
-                }
+                val result =
+                    try {
+                        member.call(jvmModuleRef, *args.map { it?.unsafeValue }.toTypedArray())
+                    } catch (e: InvocationTargetException) {
+                        throw e.targetException
+                    }
 
                 if (contextArg) {
                     @Suppress("UNCHECKED_CAST")
@@ -346,20 +380,21 @@ private fun collectImplicitGoals(
 }
 
 /**
- * Build a MuStdValue.func that constructs instances of a Kotlin data class by mirroring the
- * primary constructor. Optionality is inferred as:
- *  - ArgArity.Required         -> non-null, no default
- *  - ArgArity.Optional         -> nullable OR has a default value
- *  - ArgArity.ZeroOrMore       -> List<…> AND has a default value (e.g., = emptyList())
+ * Build a MuStdValue.func that constructs instances of a Kotlin data class by mirroring the primary
+ * constructor. Optionality is inferred as:
+ * - ArgArity.Required -> non-null, no default
+ * - ArgArity.Optional -> nullable OR has a default value
+ * - ArgArity.ZeroOrMore -> List<…> AND has a default value (e.g., = emptyList())
  *
  * Types are checked and upcast using the same TyperState/Upcast dance used elsewhere.
  */
-@InternalMuApi fun <T : Any> makeValueFromDataType(
-    exportName: String,
-    kClass: KClass<T>
-): MuStdValue {
-    val ctor = kClass.primaryConstructor
-        ?: error("makeValueFromDataType: ${kClass.qualifiedName} must have a primary constructor")
+@InternalMuApi
+fun <T : Any> makeValueFromDataType(exportName: String, kClass: KClass<T>): MuStdValue {
+    val ctor =
+        kClass.primaryConstructor
+            ?: error(
+                "makeValueFromDataType: ${kClass.qualifiedName} must have a primary constructor"
+            )
 
     // Return type is the data class itself
     val returnType = MuType.fromKType(kClass.createType())
@@ -368,36 +403,34 @@ private fun collectImplicitGoals(
     }
 
     // Build Mu args from the ctor parameters
-    data class ParamSpec(
-        val kParam: KParameter,
-        val muType: MuType,
-        val arg: Arg<MuStdValue>
-    )
+    data class ParamSpec(val kParam: KParameter, val muType: MuType, val arg: Arg<MuStdValue>)
 
     fun inferArity(p: KParameter): ArgArity {
         val isList = (p.type.classifier == List::class)
         return when {
-            isList && p.isOptional -> ArgArity.ZeroOrMore   // e.g., = emptyList()
+            isList && p.isOptional -> ArgArity.ZeroOrMore // e.g., = emptyList()
             p.isOptional || p.type.isMarkedNullable -> ArgArity.Optional
             else -> ArgArity.Required
         }
     }
 
-    val specs: List<ParamSpec> = ctor.parameters.map { p ->
-        require(p.kind == KParameter.Kind.VALUE) {
-            "Unsupported parameter kind ${p.kind} in ${kClass.qualifiedName}"
+    val specs: List<ParamSpec> =
+        ctor.parameters.map { p ->
+            require(p.kind == KParameter.Kind.VALUE) {
+                "Unsupported parameter kind ${p.kind} in ${kClass.qualifiedName}"
+            }
+            val name =
+                requireNotNull(p.name) {
+                    "All constructor parameters must be named for ${kClass.qualifiedName}"
+                }
+            val muParamType = MuType.fromKType(p.type)
+            val arity = inferArity(p)
+            ParamSpec(
+                kParam = p,
+                muType = muParamType,
+                arg = Arg(name, quote = false, arity = arity, type = muParamType),
+            )
         }
-        val name = requireNotNull(p.name) {
-            "All constructor parameters must be named for ${kClass.qualifiedName}"
-        }
-        val muParamType = MuType.fromKType(p.type)
-        val arity = inferArity(p)
-        ParamSpec(
-            kParam = p,
-            muType = muParamType,
-            arg = Arg(name, quote = false, arity = arity, type = muParamType)
-        )
-    }
 
     val args = specs.map { it.arg }
 
@@ -405,7 +438,7 @@ private fun collectImplicitGoals(
         exportName,
         typeParameters = emptyList(),
         parameters = args,
-        returnType = returnType
+        returnType = returnType,
     ) { ctx, argMap ->
         val state = one.wabbit.mu.types.TyperState<MuStdValue>(ctx.instances)
         val callByArgs = mutableMapOf<KParameter, Any?>()
@@ -413,10 +446,12 @@ private fun collectImplicitGoals(
         for (spec in specs) {
             val p = spec.kParam
             val name = p.name!!
-            val arg = argMap[name]  // May be null if omitted; that's fine for optional/defaulted params
+            val arg =
+                argMap[name] // May be null if omitted; that's fine for optional/defaulted params
 
             if (arg == null) {
-                // Omitted argument: only allowed if optional or nullable (or ZeroOrMore with default)
+                // Omitted argument: only allowed if optional or nullable (or ZeroOrMore with
+                // default)
                 if (!(p.isOptional || p.type.isMarkedNullable)) {
                     throw MissingRequiredArgumentException(exportName, name)
                 }
@@ -430,32 +465,35 @@ private fun collectImplicitGoals(
                 callByArgs[p] = arg.unsafeValue
             } catch (e: Throwable) {
                 try {
-                    val (_, r) = state.resolve(
-                        listOf(
-                            MuType.Constructor(
-                                Upcast.TypeName,
-                                listOf(arg.type, spec.muType)
+                    val (_, r) =
+                        state.resolve(
+                            listOf(
+                                MuType.Constructor(Upcast.TypeName, listOf(arg.type, spec.muType))
                             )
                         )
-                    )
-                    @Suppress("UNCHECKED_CAST")
-                    val upcast = r[0].unsafeValue as Upcast<Any?, Any?>
+                    @Suppress("UNCHECKED_CAST") val upcast = r[0].unsafeValue as Upcast<Any?, Any?>
                     callByArgs[p] = upcast(arg.unsafeValue)
                 } catch (_: Throwable) {
                     throw TypeMismatchInArgumentException(
-                        exportName, name, spec.muType, arg.type,
-                        "No implicit Upcast[${TypeFormatter.default.format(arg.type)} <:< ${TypeFormatter.default.format(spec.muType)}] was found"
+                        exportName,
+                        name,
+                        spec.muType,
+                        arg.type,
+                        "No implicit Upcast[${TypeFormatter.default.format(
+                            arg.type
+                        )} <:< ${TypeFormatter.default.format(spec.muType)}] was found",
                     )
                 }
             }
         }
 
         // Construct the instance, letting Kotlin supply defaults for omitted optional args
-        val instance = try {
-            ctor.callBy(callByArgs)
-        } catch (e: InvocationTargetException) {
-            throw e.targetException
-        }
+        val instance =
+            try {
+                ctor.callBy(callByArgs)
+            } catch (e: InvocationTargetException) {
+                throw e.targetException
+            }
 
         ctx to MuStdValue.unsafeLift(instance, returnType)
     }
@@ -465,7 +503,7 @@ data class MuStdScope(
     val parentScope: MuStdScope?,
     val file: File?,
     val openModules: PersistentSet<String>,
-    val locals: PersistentMap<String, MuStdValue>
+    val locals: PersistentMap<String, MuStdValue>,
 )
 
 fun <K, V : Any> PersistentMap<K, V>.putOrUpdate(key: K, update: (V?) -> V): PersistentMap<K, V> {
@@ -477,20 +515,27 @@ fun <K, V : Any> PersistentMap<K, V>.putOrUpdate(key: K, update: (V?) -> V): Per
     }
 }
 
-private fun Collection<String>.findSimilarNames(name: String): List<String> {
-    return this.mapNotNull {
-        val distance = levenshtein(it, name)
-        if (distance >= 10) null
-        else it to distance
-    }.sortedBy { it.second }.take(5).map { it.first }
-}
+private fun Collection<String>.findSimilarNames(name: String): List<String> =
+    this.mapNotNull {
+            val distance = levenshtein(it, name)
+            if (distance >= 10) {
+                null
+            } else {
+                it to distance
+            }
+        }
+        .sortedBy { it.second }
+        .take(5)
+        .map { it.first }
 
 data class MuStdContext(
     val instances: PersistentMap<String, PersistentList<Instance<MuStdValue>>>,
     val modules: PersistentMap<String, MuStdModule>,
-    val scope: MuStdScope
+    val scope: MuStdScope,
 ) {
-    fun newScope(file: File? = null): MuStdContext = this.copy(scope = MuStdScope(scope, file, persistentSetOf(), persistentMapOf()))
+    fun newScope(file: File? = null): MuStdContext =
+        this.copy(scope = MuStdScope(scope, file, persistentSetOf(), persistentMapOf()))
+
     fun popScope(): MuStdContext = this.copy(scope = scope.parentScope ?: scope)
 
     fun withScope(scope: MuStdScope): MuStdContext = this.copy(scope = scope)
@@ -520,10 +565,24 @@ data class MuStdContext(
 
     fun withModule(moduleName: String, module: MuStdModule): MuStdContext =
         this.copy(modules = modules.put(moduleName, module))
+
     fun withModule(moduleName: String, definitions: Map<String, MuStdValue>): MuStdContext =
-        this.copy(modules = modules.put(moduleName, MuStdModule(persistentMapOf(*definitions.toList().toTypedArray()))))
+        this.copy(
+            modules =
+                modules.put(
+                    moduleName,
+                    MuStdModule(persistentMapOf(*definitions.toList().toTypedArray())),
+                )
+        )
+
     fun withModule(moduleName: String, vararg definitions: Pair<String, MuStdValue>): MuStdContext =
-        this.copy(modules = modules.put(moduleName, MuStdModule(persistentMapOf(*definitions.toList().toTypedArray()))))
+        this.copy(
+            modules =
+                modules.put(
+                    moduleName,
+                    MuStdModule(persistentMapOf(*definitions.toList().toTypedArray())),
+                )
+        )
 
     @OptIn(InternalMuApi::class)
     fun withNativeModule(moduleName: String, jvmModuleRef: Any): MuStdContext {
@@ -538,7 +597,9 @@ data class MuStdContext(
             require(instanceAnnotations.size <= 1) { "Multiple instance annotations on $member" }
 
             // Can't have both an export and an instance annotation
-            require(exportAnnotations.isEmpty() || instanceAnnotations.isEmpty()) { "Both export and instance annotations on $member" }
+            require(exportAnnotations.isEmpty() || instanceAnnotations.isEmpty()) {
+                "Both export and instance annotations on $member"
+            }
 
             val exportAnnotation = exportAnnotations.firstOrNull()
             val instanceAnnotation = instanceAnnotations.firstOrNull()
@@ -549,18 +610,26 @@ data class MuStdContext(
                 require(!definitions.containsKey(exportName)) {
                     "Duplicate export name '$exportName' detected in module '$moduleName' for member $member"
                 }
-                definitions = definitions.put(exportName, makeValueFromMember(jvmModuleRef, exportName, member))
+                definitions =
+                    definitions.put(
+                        exportName,
+                        makeValueFromMember(jvmModuleRef, exportName, member),
+                    )
             }
 
             if (instanceAnnotation != null) {
                 val instance = makeInstanceFromMember(jvmModuleRef, member)
-                newInstances = newInstances.putOrUpdate(instance.returnType.head) { it?.add(instance) ?: persistentListOf(instance) }
+                newInstances =
+                    newInstances.putOrUpdate(instance.returnType.head) {
+                        it?.add(instance) ?: persistentListOf(instance)
+                    }
             }
         }
 
         return this.copy(
             modules = modules.put(moduleName, MuStdModule(definitions)),
-            instances = newInstances)
+            instances = newInstances,
+        )
     }
 
     fun withOpenedNativeModule(moduleName: String, jvmModuleRef: Any): MuStdContext =
@@ -571,10 +640,12 @@ data class MuStdContext(
         if (m != null) {
             val (moduleName, definitionName) = m.destructured
 
-            val module = modules[moduleName] ?: run {
-                val similarNames = modules.keys.findSimilarNames(moduleName)
-                return Left(ResolutionError.UnknownModuleName(moduleName, similarNames))
-            }
+            val module =
+                modules[moduleName]
+                    ?: run {
+                        val similarNames = modules.keys.findSimilarNames(moduleName)
+                        return Left(ResolutionError.UnknownModuleName(moduleName, similarNames))
+                    }
 
             val result = module.definitions[definitionName]
             if (result == null) {
@@ -611,11 +682,18 @@ data class MuStdContext(
 
         override fun liftInteger(context: MuStdContext, value: BigInteger): MuStdValue =
             MuStdValue.lift(MuLiteralInt(value))
-        override fun liftDouble(context: MuStdContext, value: Double): MuStdValue = MuStdValue.lift(value)
+
+        override fun liftDouble(context: MuStdContext, value: Double): MuStdValue =
+            MuStdValue.lift(value)
+
         override fun liftString(context: MuStdContext, value: String): MuStdValue =
             MuStdValue.lift(MuLiteralString(value))
-        override fun liftRational(context: MuStdContext, value: Rational): MuStdValue = MuStdValue.lift(value)
-        override fun liftExpr(context: MuStdContext, value: MuExpr): MuStdValue = MuStdValue.lift(value)
+
+        override fun liftRational(context: MuStdContext, value: Rational): MuStdValue =
+            MuStdValue.lift(value)
+
+        override fun liftExpr(context: MuStdContext, value: MuExpr): MuStdValue =
+            MuStdValue.lift(value)
 
         override fun liftList(context: MuStdContext, value: List<MuStdValue>): MuStdValue {
             if (value.isEmpty()) {
@@ -629,63 +707,74 @@ data class MuStdContext(
 
             val state = one.wabbit.mu.types.TyperState(context.instances)
             val unificationVar = MuType.Use(state.freshVar())
-            val (newState, resolved) = state.resolve(value.map {
-                MuType.Constructor(Upcast.TypeName, listOf(it.type, unificationVar))
-            })
+            val (newState, resolved) =
+                state.resolve(
+                    value.map {
+                        MuType.Constructor(Upcast.TypeName, listOf(it.type, unificationVar))
+                    }
+                )
 
             // println("newState: ${newState.lattice}")
             // println("resolved: $resolved")
 
             val newType = unificationVar.subst(newState.lattice)
 
-            val newValues = resolved.indices.map {
-                val upcast = resolved[it].unsafeValue as Upcast<Any?, Any?>
-                upcast(value[it].unsafeValue)
-            }
+            val newValues =
+                resolved.indices.map {
+                    val upcast = resolved[it].unsafeValue as Upcast<Any?, Any?>
+                    upcast(value[it].unsafeValue)
+                }
 
             return MuStdValue.unsafeLift(newValues, MuType.List(newType))
         }
 
-        override fun resolve(context: MuStdContext, name: String): Either<ResolutionError, MuStdValue> =
-            context.resolve(name)
+        override fun resolve(
+            context: MuStdContext,
+            name: String,
+        ): Either<ResolutionError, MuStdValue> = context.resolve(name)
 
-//        override fun resolveSimilar(context: MuStdContext, name: String, maxSize: Int): List<String> {
-//            if ("/" in name) {
-//                val parts = name.split("/")
-//                val moduleName = parts.first()
-//                val definitionName = parts.last()
-//                val module = context.modules[moduleName] ?: return emptyList()
-//                val env = module.definitions.keys
-//                val similarNames = env.mapNotNull {
-//                    val d = levenshtein(it, definitionName)
-//                    if (d >= 5) null
-//                    else it to d
-//                }.sortedBy { it.second }.take(5).map { "$moduleName/${it.first}" }
-//                return similarNames
-//            }
-//
-//            val env = context.locals.keys + context.openModules.flatMap { context.modules[it]?.definitions?.keys ?: emptySet() }
-//            val similarNames = env.mapNotNull {
-//                val d = levenshtein(it, name)
-//                if (d >= 5) null
-//                else it to d
-//            }.sortedBy { it.second }.take(5).map { it.first }
-//            return similarNames
-//        }
+        //        override fun resolveSimilar(context: MuStdContext, name: String, maxSize: Int):
+        // List<String> {
+        //            if ("/" in name) {
+        //                val parts = name.split("/")
+        //                val moduleName = parts.first()
+        //                val definitionName = parts.last()
+        //                val module = context.modules[moduleName] ?: return emptyList()
+        //                val env = module.definitions.keys
+        //                val similarNames = env.mapNotNull {
+        //                    val d = levenshtein(it, definitionName)
+        //                    if (d >= 5) null
+        //                    else it to d
+        //                }.sortedBy { it.second }.take(5).map { "$moduleName/${it.first}" }
+        //                return similarNames
+        //            }
+        //
+        //            val env = context.locals.keys + context.openModules.flatMap {
+        // context.modules[it]?.definitions?.keys ?: emptySet() }
+        //            val similarNames = env.mapNotNull {
+        //                val d = levenshtein(it, name)
+        //                if (d >= 5) null
+        //                else it to d
+        //            }.sortedBy { it.second }.take(5).map { it.first }
+        //            return similarNames
+        //        }
 
-        override fun extractFunc(value: MuStdValue): InterpreterContext.MuFunc<MuStdContext, MuStdValue>? {
-            return when (val rawValue = value.unsafeValue) {
-                is MuStdFunc -> InterpreterContext.MuFunc(rawValue.name, rawValue.parameters) { ctx, args -> rawValue.run(ctx, args) }
+        override fun extractFunc(
+            value: MuStdValue
+        ): InterpreterContext.MuFunc<MuStdContext, MuStdValue>? =
+            when (val rawValue = value.unsafeValue) {
+                is MuStdFunc ->
+                    InterpreterContext.MuFunc(rawValue.name, rawValue.parameters) { ctx, args ->
+                        rawValue.run(ctx, args)
+                    }
                 else -> null
             }
-        }
 
-        fun empty(): MuStdContext {
-            return MuStdContext(
+        fun empty(): MuStdContext =
+            MuStdContext(
                 persistentMapOf(),
                 persistentMapOf(),
-                MuStdScope(null, null, persistentSetOf(), persistentMapOf())
+                MuStdScope(null, null, persistentSetOf(), persistentMapOf()),
             )
-        }
     }
 }

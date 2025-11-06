@@ -2,14 +2,18 @@ package one.wabbit.mu.types
 
 import java.lang.Math.pow
 import kotlin.math.roundToInt
-import kotlin.test.*
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotSame
+import kotlin.test.assertTrue
 
 class MutableEqLatticeSpec {
     val alphabet = ('a'..'z').toList().map { it.toString() }
 
     fun random(): MutableEqLattice<String, Unit> {
         val map = MutableEqLattice<String, Unit>()
-        for (i in 0 until pow(alphabet.size.toDouble(), 2.0/3.0).roundToInt()) {
+        for (i in 0 until pow(alphabet.size.toDouble(), 2.0 / 3.0).roundToInt()) {
             val a = alphabet.random()
             val b = alphabet.random()
             map.join(a, b)
@@ -17,7 +21,8 @@ class MutableEqLatticeSpec {
         return map
     }
 
-    @Test fun properties() {
+    @Test
+    fun properties() {
         for (iter in 0..100) {
             val map = random()
             // println(map)
@@ -95,7 +100,8 @@ class MutableEqLatticeSpec {
         }
     }
 
-    @Test fun test() {
+    @Test
+    fun test() {
         val map = MutableEqLattice<String, Unit>()
 
         map.join("e", "f")

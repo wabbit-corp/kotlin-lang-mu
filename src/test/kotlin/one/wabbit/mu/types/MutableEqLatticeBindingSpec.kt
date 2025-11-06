@@ -1,15 +1,18 @@
 package one.wabbit.mu.types
 
-import kotlin.test.*
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * These tests isolate the "lost representative" bug in MutableEqLattice.join.
  *
- * They specifically create TWO existing clusters, attach a representative to one,
- * then merge the clusters.
+ * They specifically create TWO existing clusters, attach a representative to one, then merge the
+ * clusters.
  */
 class MutableEqLatticeBindingSpec {
-
     @Test
     fun `binding survives merge of two pre-existing clusters`() {
         val m = MutableEqLattice<String, String>()
@@ -38,10 +41,10 @@ class MutableEqLatticeBindingSpec {
     @Test
     fun `binding survives transitive merges`() {
         val m = MutableEqLattice<String, String>()
-        m["x"] = "R"      // cluster X: {x} with rep "R"
-        m.join("a", "b")  // cluster A: {a, b}
-        m.join("b", "c")  // still cluster A: {a, b, c}
-        m.join("x", "a")  // merge clusters X and A
+        m["x"] = "R" // cluster X: {x} with rep "R"
+        m.join("a", "b") // cluster A: {a, b}
+        m.join("b", "c") // still cluster A: {a, b, c}
+        m.join("x", "a") // merge clusters X and A
 
         // Without migration, the "R" binding disappears after the merge.
         assertEquals("R", m["x"])
@@ -53,8 +56,8 @@ class MutableEqLatticeBindingSpec {
     @Test
     fun `binding persists when joining an existing cluster with a fresh element`() {
         val m = MutableEqLattice<String, String>()
-        m["a"] = "T"      // cluster {a} with rep "T"
-        m.join("a", "b")  // 'b' gets attached to 'a''s cluster (no root merge)
+        m["a"] = "T" // cluster {a} with rep "T"
+        m.join("a", "b") // 'b' gets attached to 'a''s cluster (no root merge)
 
         // This case already works in the old code; serves as a baseline.
         assertEquals("T", m["a"])
@@ -64,12 +67,13 @@ class MutableEqLatticeBindingSpec {
     @Test
     fun `when both sides have different representatives, one must survive merge`() {
         val m = MutableEqLattice<String, String>()
-        m["a"] = "TA"     // cluster A: {a} with "TA"
-        m["b"] = "TB"     // cluster B: {b} with "TB"
-        m.join("a", "b")  // merge A and B
+        m["a"] = "TA" // cluster A: {a} with "TA"
+        m["b"] = "TB" // cluster B: {b} with "TB"
+        m.join("a", "b") // merge A and B
 
         // Pre-fix, both become null (binding lost).
-        // Post-fix, we keep the "winner" root's representative; exact choice is implementation-defined.
+        // Post-fix, we keep the "winner" root's representative; exact choice is
+        // implementation-defined.
         val va = m["a"]
         val vb = m["b"]
         assertNotNull(va, "expected one representative to survive merge")

@@ -1,62 +1,80 @@
 package one.wabbit.mu.parser
 
+import java.io.File
+import java.nio.file.Path
 import one.wabbit.math.Rational
 import one.wabbit.mu.MuException
 import one.wabbit.parsing.CharInput
 import one.wabbit.parsing.Pos
 import one.wabbit.parsing.TextAndPosSpan
-import java.io.File
-import java.nio.file.Path
 
 private fun Char.isWhitespace(): Boolean =
     this == ' ' || this == '\t' || this == '\r' || this == '\n'
 
-private fun Char.isHexDigit(): Boolean =
-    this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
+private fun Char.isHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
-private fun Char.isDigit(): Boolean =
-    this in '0'..'9'
+private fun Char.isDigit(): Boolean = this in '0'..'9'
 
-private const val BRACKET_OPEN   = '['  // used for lists
-private const val BRACKET_CLOSE  = ']'  // used for lists
-private const val BRACE_OPEN     = '{'  // used for maps
-private const val BRACE_CLOSE    = '}'  // used for maps
-private const val PAREN_OPEN     = '('  // used for grouping
-private const val PAREN_CLOSE    = ')'  // used for grouping
-private const val QUOTE_SINGLE   = '\'' // used in strings
-private const val QUOTE_DOUBLE   = '"'  // used in strings
-private const val QUOTE_BACKTICK = '`'  // used for quoting and unquoting
-private const val BACKSLASH      = '\\' // used in escape sequences
-private const val COMMA          = ','  // used in maps
-private const val COLON          = ':'  // used in maps
-private const val SEMICOLON      = ';'  // used in comments
+private const val BRACKET_OPEN = '[' // used for lists
+private const val BRACKET_CLOSE = ']' // used for lists
+private const val BRACE_OPEN = '{' // used for maps
+private const val BRACE_CLOSE = '}' // used for maps
+private const val PAREN_OPEN = '(' // used for grouping
+private const val PAREN_CLOSE = ')' // used for grouping
+private const val QUOTE_SINGLE = '\'' // used in strings
+private const val QUOTE_DOUBLE = '"' // used in strings
+private const val QUOTE_BACKTICK = '`' // used for quoting and unquoting
+private const val BACKSLASH = '\\' // used in escape sequences
+private const val COMMA = ',' // used in maps
+private const val COLON = ':' // used in maps
+private const val SEMICOLON = ';' // used in comments
 
 internal fun Char.isNameChar(): Boolean =
-    this.isLetter() || this.isDigit() || this == '_' || this == '.' ||
-            this == '@' || this == '/' || this == '+' || this == '-' ||
-            this == '=' || this == '$' || this == '%' ||
-            this == '!' || this == '?' || this == '*' || this == '#' ||
-            this == '&' || this == '~' || this == '^' || this == '|' ||
-            this == '<' || this == '>' || this == ':'
+    this.isLetter() ||
+        this.isDigit() ||
+        this == '_' ||
+        this == '.' ||
+        this == '@' ||
+        this == '/' ||
+        this == '+' ||
+        this == '-' ||
+        this == '=' ||
+        this == '$' ||
+        this == '%' ||
+        this == '!' ||
+        this == '?' ||
+        this == '*' ||
+        this == '#' ||
+        this == '&' ||
+        this == '~' ||
+        this == '^' ||
+        this == '|' ||
+        this == '<' ||
+        this == '>' ||
+        this == ':'
 
 class MuParseException(message: String, pos: Pos) : MuException("$message at $pos")
 
 class MuParser(val input: CharInput<TextAndPosSpan>) {
-    private inline fun require(value: Boolean, lazyMessage: () -> String): Unit {
+    private inline fun require(value: Boolean, lazyMessage: () -> String) {
         if (!value) throw MuParseException(lazyMessage(), input.pos())
     }
+
     @Suppress("NOTHING_TO_INLINE")
-    private inline fun error(message: String): Nothing {
+    private inline fun error(message: String): Nothing =
         throw MuParseException(message, input.pos())
-    }
 
     fun skipWS() {
         while (true) {
-            if (input.current.isWhitespace()) input.advance()
-            else if (input.current == SEMICOLON) {
-                while (input.current != '\n' && input.current != CharInput.EOB)
+            if (input.current.isWhitespace()) {
+                input.advance()
+            } else if (input.current == SEMICOLON) {
+                while (input.current != '\n' && input.current != CharInput.EOB) {
                     input.advance()
-            } else break
+                }
+            } else {
+                break
+            }
         }
     }
 
@@ -78,16 +96,15 @@ class MuParser(val input: CharInput<TextAndPosSpan>) {
         if (input.current == BRACE_OPEN) return parseMap()
         if (input.current == BRACKET_OPEN) return parseList()
         if (input.current == PAREN_OPEN) return parseGroup()
-        if (input.current == QUOTE_SINGLE || input.current == QUOTE_DOUBLE)
+        if (input.current == QUOTE_SINGLE || input.current == QUOTE_DOUBLE) {
             return parseString()
+        }
         if (input.current.isNameChar()) return parseRealOrIntegerOrSymbol()!!
         error("Expected expression, found '${input.current}'")
     }
 
     fun parseName(start: CharInput.Mark): MuParsedExpr.Atom {
-        require(input.current.isNameChar()) {
-            "Expected name character while parsing name"
-        }
+        require(input.current.isNameChar()) { "Expected name character while parsing name" }
         while (input.current.isNameChar()) input.advance()
         val s = input.capture(start)
         return MuParsedExpr.Atom(Spanned(s.raw, s))
@@ -96,9 +113,11 @@ class MuParser(val input: CharInput<TextAndPosSpan>) {
     fun parseRealOrIntegerOrSymbol(): MuParsedExpr? {
         val start = input.mark()
         val numChars = StringBuilder()
+
         fun advance() {
-            if (input.current != '_' && input.current != '%')
+            if (input.current != '_' && input.current != '%') {
                 numChars.append(input.current)
+            }
             input.advance()
         }
 
@@ -107,8 +126,7 @@ class MuParser(val input: CharInput<TextAndPosSpan>) {
         // State 0: +/- and the first digit
         if (input.current == '-' || input.current == '+') {
             advance()
-        }
-        else if (input.current.isNameChar() && !input.current.isDigit()) {
+        } else if (input.current.isNameChar() && !input.current.isDigit()) {
             return parseName(start)
         }
 
@@ -321,14 +339,22 @@ class MuParser(val input: CharInput<TextAndPosSpan>) {
                     if (key.name.value.endsWith(":")) {
                         val newValue = key.name.value.dropLast(1)
                         val oldSpan = key.name.span
-                        val newSpan = TextAndPosSpan(oldSpan.raw.dropLast(1), oldSpan.start,
-                            Pos(oldSpan.end.line, oldSpan.end.column - 1, oldSpan.end.index - 1))
+                        val newSpan =
+                            TextAndPosSpan(
+                                oldSpan.raw.dropLast(1),
+                                oldSpan.start,
+                                Pos(oldSpan.end.line, oldSpan.end.column - 1, oldSpan.end.index - 1),
+                            )
                         key = MuParsedExpr.Atom(Spanned(newValue, newSpan))
                     } else {
                         error("Expected ':' or ':' at the end of atom")
                     }
-                } else error("Expected ':' or ':' at the end of atom")
-            } else input.advance()
+                } else {
+                    error("Expected ':' or ':' at the end of atom")
+                }
+            } else {
+                input.advance()
+            }
             skipWS()
             val value = parseExpression()
             result.add(key to value)
@@ -432,9 +458,13 @@ class MuParser(val input: CharInput<TextAndPosSpan>) {
 
     companion object {
         fun parse(input: CharInput<TextAndPosSpan>): List<MuParsedExpr> = MuParser(input).parseAll()
+
         fun parse(input: String): List<MuParsedExpr> = parse(CharInput.withTextAndPosSpans(input))
+
         fun parseFile(path: File): List<MuParsedExpr> = parse(path.readText())
+
         fun parseFile(path: String): List<MuParsedExpr> = parseFile(File(path))
+
         fun parseFile(path: Path): List<MuParsedExpr> = parseFile(path.toFile())
     }
 }

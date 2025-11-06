@@ -1,16 +1,18 @@
 package one.wabbit.mu.types
 
-import kotlin.test.*
 import kotlin.reflect.full.createType
 import kotlin.reflect.typeOf
-
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class MuTypeFromKTypeSpec {
-
     // Simple fixture types for nested/inner/companion cases
     class Enclosing {
         class Nested
+
         inner class Inner
+
         companion object
     }
 
@@ -49,7 +51,10 @@ class MuTypeFromKTypeSpec {
 
     @Test
     fun `anonymous object types are currently unsupported (qualifiedName == null)`() {
-        val anon = object { val x = 1 }
+        val anon =
+            object {
+                val x = 1
+            }
         val kt = anon::class.createType()
         val mt = MuType.fromKType(kt)
 
@@ -68,7 +73,7 @@ class MuTypeFromKTypeSpec {
         // (suspend variants may reflect as kotlin.coroutines.SuspendFunction1)
         assertTrue(
             c.head.endsWith("Function1") || c.head.endsWith("SuspendFunction1"),
-            "Expected Function1-ish head, got ${c.head}"
+            "Expected Function1-ish head, got ${c.head}",
         )
 
         // Args: [ParamType, ReturnType]
@@ -84,7 +89,8 @@ class MuTypeFromKTypeSpec {
         val t1 = MuType.fromKType(typeOf<(Int) -> String?>())
         val c1 = t1 as MuType.Constructor
         val ret1 = c1.args[1]
-        val n1 = ret1 as? MuType.Constructor ?: error("Expected return to be Constructor, got $ret1")
+        val n1 =
+            ret1 as? MuType.Constructor ?: error("Expected return to be Constructor, got $ret1")
         assertEquals("?", n1.head)
         assertEquals(MuType.String, n1.args.single())
 
@@ -92,7 +98,9 @@ class MuTypeFromKTypeSpec {
         val t2 = MuType.fromKType(typeOf<((Int) -> String)?>())
         val n2 = t2 as? MuType.Constructor ?: error("Expected Constructor, got $t2")
         assertEquals("?", n2.head)
-        val inner = n2.args.single() as? MuType.Constructor ?: error("Expected inner Constructor, got ${n2.args.single()}")
+        val inner =
+            n2.args.single() as? MuType.Constructor
+                ?: error("Expected inner Constructor, got ${n2.args.single()}")
         assertTrue(inner.head.endsWith("Function1") || inner.head.endsWith("SuspendFunction1"))
     }
 
@@ -104,19 +112,22 @@ class MuTypeFromKTypeSpec {
         val topExists = t as? MuType.Exists ?: error("Expected top-level Exists, got $t")
         assertEquals(1, topExists.vars.size)
 
-        val mapC = topExists.tpe as? MuType.Constructor
-            ?: error("Expected Constructor under Exists, got ${topExists.tpe}")
+        val mapC =
+            topExists.tpe as? MuType.Constructor
+                ?: error("Expected Constructor under Exists, got ${topExists.tpe}")
         assertEquals("kotlin.collections.Map", mapC.head)
 
         // key: Use(existential)
         assertTrue(mapC.args[0] is MuType.Use, "Expected existential key, got ${mapC.args[0]}")
 
         // value: Exists(var).Constructor(List, [Use(var)])
-        val valueExists = mapC.args[1] as? MuType.Exists
-            ?: error("Expected Exists for List<*>, got ${mapC.args[1]}")
+        val valueExists =
+            mapC.args[1] as? MuType.Exists
+                ?: error("Expected Exists for List<*>, got ${mapC.args[1]}")
         assertEquals(1, valueExists.vars.size)
-        val listC = valueExists.tpe as? MuType.Constructor
-            ?: error("Expected Constructor under inner Exists, got ${valueExists.tpe}")
+        val listC =
+            valueExists.tpe as? MuType.Constructor
+                ?: error("Expected Constructor under inner Exists, got ${valueExists.tpe}")
         assertEquals("kotlin.collections.List", listC.head)
         assertTrue(listC.args[0] is MuType.Use)
     }
@@ -127,7 +138,9 @@ class MuTypeFromKTypeSpec {
         val t = MuType.fromKType(typeOf<Array<*>>())
         val ex = t as? MuType.Exists ?: error("Expected Exists, got $t")
         assertEquals(1, ex.vars.size)
-        val arr = ex.tpe as? MuType.Constructor ?: error("Expected Constructor under Exists, got ${ex.tpe}")
+        val arr =
+            ex.tpe as? MuType.Constructor
+                ?: error("Expected Constructor under Exists, got ${ex.tpe}")
         assertEquals("kotlin.Array", arr.head)
         assertTrue(arr.args[0] is MuType.Use)
     }
