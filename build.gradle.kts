@@ -32,18 +32,18 @@ publishing {
 }
 
 dependencies {
-    implementation("com.github.wabbit-corp:kotlin-math-rational:1.2.0")
-    implementation("com.github.wabbit-corp:kotlin-data:3.0.0")
-    implementation("com.github.wabbit-corp:kotlin-extra-serializers:2.0.0")
-    implementation("com.github.wabbit-corp:kotlin-parsing-charinput:1.2.0")
-    implementation("com.github.wabbit-corp:kotlin-levenshtein:1.1.0")
-    testImplementation("com.github.wabbit-corp:kotlin-random-gen:2.0.0")
+    implementation("one.wabbit:kotlin-math-rational:1.2.0")
+    implementation("one.wabbit:kotlin-data:3.0.0")
+    implementation("one.wabbit:kotlin-extra-serializers:2.0.0")
+    implementation("one.wabbit:kotlin-parsing-charinput:1.2.0")
+    implementation("one.wabbit:kotlin-levenshtein:1.1.0")
+    testImplementation("one.wabbit:kotlin-random-gen:2.0.0")
 
     testImplementation(kotlin("test"))
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.9.0")
 
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.3.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.2.20")
     implementation("org.jetbrains.kotlinx:kotlinx-collections-immutable:0.4.0")
 }

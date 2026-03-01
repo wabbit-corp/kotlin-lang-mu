@@ -2,10 +2,11 @@ package one.wabbit.mu.types
 
 import java.util.PriorityQueue
 import one.wabbit.mu.types.MuType.Use
-import org.slf4j.LoggerFactory
+import java.util.logging.Level
+import java.util.logging.Logger
 
-private val UnificationLogger = LoggerFactory.getLogger("Typing.Unification")
-private val ResolutionLogger = LoggerFactory.getLogger("Typing.Resolution")
+private val UnificationLogger = Logger.getLogger("Typing.Unification")
+private val ResolutionLogger = Logger.getLogger("Typing.Resolution")
 
 class TyperState<Value>(
     val instances: Map<String, List<Instance<Value>>> = emptyMap(),
@@ -69,7 +70,7 @@ class TyperState<Value>(
 
     /** Unify two types. */
     fun unify(a: MuType, b: MuType) {
-        UnificationLogger.debug("unifying: $a ~ $b")
+        UnificationLogger.log(Level.FINE, "unifying: $a ~ $b")
 
         // Always open quantifiers first, on either side
         if (a is MuType.Forall) return unifyS(a, b)
@@ -424,13 +425,13 @@ class TyperState<Value>(
 
         // If queue is empty and no solution was found
         if (iterations >= maxIterations) {
-            ResolutionLogger.error(
+            ResolutionLogger.log(Level.WARNING,
                 "Instance resolution exceeded max iterations ($maxIterations) for goals: ${typeclasses.joinToString(
                     ", "
                 ) { it.format() }}}"
             )
         } else {
-            ResolutionLogger.error(
+            ResolutionLogger.log(Level.WARNING,
                 "Instance resolution failed for goals: ${typeclasses.joinToString(", ") { it.format() }}"
             )
         }

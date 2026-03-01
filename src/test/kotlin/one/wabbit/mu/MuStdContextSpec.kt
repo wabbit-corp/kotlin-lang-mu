@@ -8,7 +8,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import one.wabbit.data.rightOrNull
 import one.wabbit.mu.runtime.ArgArity
 import one.wabbit.mu.runtime.Mu
 import one.wabbit.mu.runtime.MuStdContext
@@ -38,13 +37,13 @@ class MuStdContextSpec {
         assertEquals(setOf("PI", "counter", "greet", "addInts"), module.definitions.keys)
 
         // Check PI (Const KProperty)
-        val piValue = context.resolve("basic/PI").rightOrNull()
+        val piValue = context.resolve("basic/PI").rightOrNull
         assertNotNull(piValue)
         assertEquals(MuType.Double, piValue.type)
         assertEquals(3.14, piValue.unsafeValue)
 
         // Check counter (Mutable KProperty -> Function)
-        val counterFunc = context.resolve("basic/counter").rightOrNull()
+        val counterFunc = context.resolve("basic/counter").rightOrNull
         assertNotNull(counterFunc)
         assertTrue(counterFunc.type is MuType.Func)
         assertEquals(MuType.Int, (counterFunc.type as MuType.Func).returnType)
@@ -52,7 +51,7 @@ class MuStdContextSpec {
         assertEquals(MuType.Int.nullable(), (counterFunc.type as MuType.Func).parameters[0])
 
         // Check greet (Function)
-        val greetFunc = context.resolve("basic/greet").rightOrNull()
+        val greetFunc = context.resolve("basic/greet").rightOrNull
         assertNotNull(greetFunc)
         assertTrue(greetFunc.type is MuType.Func)
         assertEquals(MuType.String, (greetFunc.type as MuType.Func).returnType)
@@ -60,7 +59,7 @@ class MuStdContextSpec {
         assertEquals(MuType.String, (greetFunc.type as MuType.Func).parameters[0])
 
         // Check addInts (Renamed Function)
-        val addFunc = context.resolve("basic/addInts").rightOrNull()
+        val addFunc = context.resolve("basic/addInts").rightOrNull
         assertNotNull(addFunc)
         assertTrue(addFunc.type is MuType.Func)
         assertEquals(MuType.Int, (addFunc.type as MuType.Func).returnType)
@@ -70,10 +69,10 @@ class MuStdContextSpec {
 
         // Check resolution after opening
         val openContext = context.withOpenModule("basic")
-        assertNotNull(openContext.resolve("PI").rightOrNull())
-        assertNotNull(openContext.resolve("counter").rightOrNull())
-        assertNotNull(openContext.resolve("greet").rightOrNull())
-        assertNotNull(openContext.resolve("addInts").rightOrNull())
+        assertNotNull(openContext.resolve("PI").rightOrNull)
+        assertNotNull(openContext.resolve("counter").rightOrNull)
+        assertNotNull(openContext.resolve("greet").rightOrNull)
+        assertNotNull(openContext.resolve("addInts").rightOrNull)
     }
 
     class AdvancedTestModule {
@@ -212,7 +211,7 @@ class MuStdContextSpec {
         )
 
         // Check export that uses instance
-        val printFunc = context.resolve("inst/print").rightOrNull()?.unsafeValue as? MuStdFunc
+        val printFunc = context.resolve("inst/print").rightOrNull?.unsafeValue as? MuStdFunc
         assertNotNull(printFunc)
         assertEquals(1, printFunc.typeParameters.size) // <A>
         assertEquals(1, printFunc.parameters.size) // the 'value: A' parameter
