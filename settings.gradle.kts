@@ -4,7 +4,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven("https://repo.papermc.io/repository/maven-public/")
+
     }
 }
 
@@ -12,7 +12,7 @@ pluginManagement {
     repositories {
         google()
         gradlePluginPortal()
-        maven("https://repo.papermc.io/repository/maven-public/")
+
     }
     plugins {
         id("org.jetbrains.kotlin.jvm") version "2.3.10"
@@ -32,20 +32,3 @@ pluginManagement {
         id("net.minecrell.plugin-yml.bukkit") version "0.6.0"
     }
 }
-
-include(":kotlin-math-rational")
-project(":kotlin-math-rational").projectDir = file("../kotlin-math-rational")
-include(":kotlin-data")
-project(":kotlin-data").projectDir = file("../kotlin-data")
-include(":kotlin-extra-serializers")
-project(":kotlin-extra-serializers").projectDir = file("../kotlin-extra-serializers")
-include(":kotlin-parsing-charinput")
-project(":kotlin-parsing-charinput").projectDir = file("../kotlin-parsing-charinput")
-include(":kotlin-levenshtein")
-project(":kotlin-levenshtein").projectDir = file("../kotlin-levenshtein")
-include(":kotlin-random-gen")
-project(":kotlin-random-gen").projectDir = file("../kotlin-random-gen")
-include(":kotlin-data-need")
-project(":kotlin-data-need").projectDir = file("../kotlin-data-need")
-include(":kotlin-base58")
-project(":kotlin-base58").projectDir = file("../kotlin-base58")

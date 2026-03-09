@@ -3,6 +3,8 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 repositories {
     mavenCentral()
+
+    maven("https://jitpack.io")
 }
 
 group   = "one.wabbit"
@@ -30,12 +32,12 @@ publishing {
 }
 
 dependencies {
-    implementation(project(":kotlin-math-rational")) // 1.2.0
-    implementation(project(":kotlin-data")) // 3.0.0
-    implementation(project(":kotlin-extra-serializers")) // 2.0.0
-    implementation(project(":kotlin-parsing-charinput")) // 1.2.0
-    implementation(project(":kotlin-levenshtein")) // 1.1.0
-    testImplementation(project(":kotlin-random-gen")) // 2.0.0
+    implementation("one.wabbit:kotlin-math-rational:1.2.0")
+    implementation("one.wabbit:kotlin-data:3.0.0")
+    implementation("one.wabbit:kotlin-extra-serializers:2.0.0")
+    implementation("one.wabbit:kotlin-parsing-charinput:1.2.0")
+    implementation("one.wabbit:kotlin-levenshtein:1.1.0")
+    testImplementation("one.wabbit:kotlin-random-gen:2.0.0")
 
     testImplementation(kotlin("test"))
 
