@@ -43,6 +43,10 @@ sealed interface MuIO<R> {
 
 object Mu {
     @Retention(AnnotationRetention.RUNTIME)
+    @Target(AnnotationTarget.CLASS)
+    annotation class Tag(val name: String)
+
+    @Retention(AnnotationRetention.RUNTIME)
     @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
     annotation class Export(val name: String = "")
 
@@ -55,7 +59,7 @@ object Mu {
     annotation class Instance
 
     @Retention(AnnotationRetention.RUNTIME)
-    @Target(AnnotationTarget.VALUE_PARAMETER)
+    @Target(AnnotationTarget.VALUE_PARAMETER, AnnotationTarget.PROPERTY)
     annotation class Name(val name: String)
 
     @Retention(AnnotationRetention.RUNTIME)
@@ -67,15 +71,15 @@ object Mu {
     annotation class Const
 
     @Retention(AnnotationRetention.RUNTIME)
-    @Target(AnnotationTarget.VALUE_PARAMETER)
+    @Target(AnnotationTarget.VALUE_PARAMETER, AnnotationTarget.PROPERTY)
     annotation class Optional
 
     @Retention(AnnotationRetention.RUNTIME)
-    @Target(AnnotationTarget.VALUE_PARAMETER)
+    @Target(AnnotationTarget.VALUE_PARAMETER, AnnotationTarget.PROPERTY)
     annotation class ZeroOrMore
 
     @Retention(AnnotationRetention.RUNTIME)
-    @Target(AnnotationTarget.VALUE_PARAMETER)
+    @Target(AnnotationTarget.VALUE_PARAMETER, AnnotationTarget.PROPERTY)
     annotation class OneOrMore
 
     @Retention(AnnotationRetention.RUNTIME)
