@@ -47,6 +47,10 @@ object Mu {
     annotation class Tag(val name: String)
 
     @Retention(AnnotationRetention.RUNTIME)
+    @Target(AnnotationTarget.CLASS)
+    annotation class Transparent
+
+    @Retention(AnnotationRetention.RUNTIME)
     @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
     annotation class Export(val name: String = "")
 

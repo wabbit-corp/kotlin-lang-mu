@@ -56,6 +56,8 @@ open class MuTreeFormat(
     val classDiscriminator: String = "\$type",
     val polymorphicValueField: String = "\$value",
     val ignoreUnknownKeys: Boolean = false,
+    val firstPositionalFields: Set<String> = emptySet(),
+    val singleFieldPositional: Boolean = true,
 ) : kotlinx.serialization.SerialFormat {
     init {
         require(classDiscriminator.isNotEmpty()) { "classDiscriminator must not be empty." }
@@ -255,6 +257,27 @@ private fun isNamedArgumentSafe(name: String): Boolean = shouldRenderAsAtom(":$n
 
 private fun isSingleFieldPositional(descriptor: SerialDescriptor): Boolean = descriptor.elementsCount == 1
 
+private fun positionalFieldIndexes(
+    format: MuTreeFormat,
+    descriptor: SerialDescriptor,
+    layout: MuClassLayout,
+): Set<Int> {
+    if (layout.fields.isEmpty()) {
+        return emptySet()
+    }
+
+    if (format.singleFieldPositional && isSingleFieldPositional(descriptor)) {
+        return setOf(layout.fields.single().index)
+    }
+
+    val first = layout.fields.first()
+    if (first.sourceName in format.firstPositionalFields || first.muName in format.firstPositionalFields) {
+        return setOf(first.index)
+    }
+
+    return emptySet()
+}
+
 private fun groupTag(node: MuParsedExpr.Seq): String? = node.value.firstOrNull()?.let(::muStringLike)
 
 private fun elementArity(descriptor: SerialDescriptor, index: Int): ArgArity =
@@ -359,6 +382,14 @@ private data class MuFieldLayout(
 private data class MuClassLayout(
     val tag: String,
     val fields: List<MuFieldLayout>,
+    val transparent: Boolean,
+)
+
+private data class MuPolymorphicSubtypeLayout(
+    val serialName: String,
+    val tag: String,
+    val serializer: DeserializationStrategy<Any?>,
+    val transparentLayout: MuClassLayout?,
 )
 
 private fun serializerTargetClass(serializer: Any?, descriptor: SerialDescriptor): Class<*>? {
@@ -372,6 +403,7 @@ private fun resolveClassLayout(serializer: Any?, descriptor: SerialDescriptor): 
     val targetClass = serializerTargetClass(serializer, descriptor)
     val constructorParams = targetClass?.kotlin?.primaryConstructor?.parameters.orEmpty()
     val classTag = targetClass?.getAnnotation(Mu.Tag::class.java)?.name ?: classTag(descriptor)
+    val transparent = targetClass?.isAnnotationPresent(Mu.Transparent::class.java) == true
 
     val fields =
         (0 until descriptor.elementsCount).map { index ->
@@ -399,7 +431,82 @@ private fun resolveClassLayout(serializer: Any?, descriptor: SerialDescriptor): 
             )
         }
 
-    return MuClassLayout(tag = classTag, fields = fields)
+    if (transparent) {
+        if (fields.size != 1) {
+            throw SerializationException(
+                "@Mu.Transparent on ${descriptor.serialName} requires exactly one field."
+            )
+        }
+        when (fields.single().arity) {
+            ArgArity.ZeroOrMore,
+            ArgArity.OneOrMore ->
+                throw SerializationException(
+                    "@Mu.Transparent on ${descriptor.serialName} does not support variadic wrapper fields."
+                )
+            else -> Unit
+        }
+    }
+
+    return MuClassLayout(tag = classTag, fields = fields, transparent = transparent)
+}
+
+private fun serializerDescriptor(serializer: Any?): SerialDescriptor? =
+    when (serializer) {
+        is DeserializationStrategy<*> -> serializer.descriptor
+        is SerializationStrategy<*> -> serializer.descriptor
+        else -> null
+    }
+
+private fun polymorphicTag(serializer: Any?, fallback: String): String {
+    val descriptor = serializerDescriptor(serializer) ?: return fallback
+    return when (descriptor.kind) {
+        StructureKind.CLASS,
+        StructureKind.OBJECT -> resolveClassLayout(serializer, descriptor).tag
+        else -> fallback
+    }
+}
+
+private fun transparentLayout(serializer: Any?): Pair<SerialDescriptor, MuClassLayout>? {
+    val descriptor = serializerDescriptor(serializer) ?: return null
+    val layout =
+        when (descriptor.kind) {
+            StructureKind.CLASS,
+            StructureKind.OBJECT -> resolveClassLayout(serializer, descriptor)
+            else -> return null
+        }
+    if (!layout.transparent) {
+        return null
+    }
+    return descriptor to layout
+}
+
+private fun reflectField(instance: Any?, fieldName: String): Any? {
+    var current = instance?.javaClass
+    while (current != null) {
+        val field = runCatching { current.getDeclaredField(fieldName) }.getOrNull()
+        if (field != null) {
+            field.isAccessible = true
+            return field.get(instance)
+        }
+        current = current.superclass
+    }
+    return null
+}
+
+private fun sealedSubtypeLayouts(deserializer: Any?): List<MuPolymorphicSubtypeLayout> {
+    val byName = reflectField(deserializer, "serialName2Serializer") as? Map<*, *> ?: return emptyList()
+    return byName.mapNotNull { (key, value) ->
+        val serialName = key as? String ?: return@mapNotNull null
+        @Suppress("UNCHECKED_CAST")
+        val serializer = value as? DeserializationStrategy<Any?> ?: return@mapNotNull null
+        val transparentLayout = transparentLayout(serializer)?.second
+        MuPolymorphicSubtypeLayout(
+            serialName = serialName,
+            tag = polymorphicTag(serializer, serialName),
+            serializer = serializer,
+            transparentLayout = transparentLayout,
+        )
+    }
 }
 
 private fun parseIntegerAtom(text: String): BigInteger? =
@@ -463,6 +570,7 @@ private class MuTreePolymorphicEncoder(private val parent: MuTreeEncoder) :
 
     private var typeName: String? = null
     private var valueNode: MuParsedExpr? = null
+    private var valueSerializer: Any? = null
 
     override fun encodeElement(descriptor: SerialDescriptor, index: Int, value: MuParsedExpr) {
         if (DEBUG_ENCODER) {
@@ -476,10 +584,22 @@ private class MuTreePolymorphicEncoder(private val parent: MuTreeEncoder) :
         }
     }
 
+    override fun <T> encodeSerializableElement(
+        descriptor: SerialDescriptor,
+        index: Int,
+        serializer: SerializationStrategy<T>,
+        value: T,
+    ) {
+        if (index == 1) {
+            valueSerializer = serializer
+        }
+        super.encodeSerializableElement(descriptor, index, serializer, value)
+    }
+
     override fun endStructure(descriptor: SerialDescriptor) {
         val typeName = typeName ?: throw SerializationException("Missing polymorphic discriminator.")
         val valueNode = valueNode ?: throw SerializationException("Missing polymorphic value.")
-        parent.publishResult(parent.format.wrapPolymorphic(typeName, valueNode))
+        parent.publishResult(parent.format.wrapPolymorphic(typeName, valueNode, valueSerializer))
     }
 }
 
@@ -606,6 +726,7 @@ private class MuTreeClassEncoder(
     override fun endStructure(descriptor: SerialDescriptor) {
         val useGroup =
             isSingleFieldPositional(descriptor) || layout.fields.all { isNamedArgumentSafe(it.muName) }
+        val positionalIndexes = positionalFieldIndexes(format, descriptor, layout)
 
         if (!useGroup) {
             parent.publishResult(
@@ -644,7 +765,7 @@ private class MuTreeClassEncoder(
                     listOf(rawValue)
                 }
 
-            if (isSingleFieldPositional(descriptor)) {
+            if (field.index in positionalIndexes) {
                 exprs += encodedValues
             } else {
                 exprs += atomNode(":${field.muName}")
@@ -998,7 +1119,7 @@ private class MuTreeDecoder(
             }
             PolymorphicKind.SEALED,
             PolymorphicKind.OPEN -> {
-                val (typeName, valueNode) = format.unwrapPolymorphic(node)
+                val (typeName, valueNode) = format.unwrapPolymorphic(node, deserializer)
                 MuTreePolymorphicDecoder(format, typeName, valueNode)
             }
             SerialKind.ENUM ->
@@ -1108,19 +1229,76 @@ private fun BigInteger.toByteExact(): Byte = byteValueExact()
 
 private fun BigInteger.toShortExact(): Short = shortValueExact()
 
-private fun MuTreeFormat.wrapPolymorphic(typeName: String, value: MuParsedExpr): MuParsedExpr =
-    when (value) {
-        is MuParsedExpr.Seq -> {
-            if (groupTag(value) == typeName) {
-                value
-            } else {
-                MuParsedExpr.Seq(listOf(atomNode(typeName), atomNode(":$polymorphicValueField"), value))
+private fun transparentWrapperNode(layout: MuClassLayout, valueNode: MuParsedExpr): MuParsedExpr =
+    MuParsedExpr.Seq(listOf(atomNode(layout.tag), valueNode))
+
+private fun extractTransparentPayload(
+    descriptor: SerialDescriptor,
+    layout: MuClassLayout,
+    value: MuParsedExpr,
+): MuParsedExpr {
+    val field = layout.fields.single()
+    val byIndex =
+        when (value) {
+            is MuParsedExpr.Seq -> decodeGroupFields(value, descriptor, layout, ignoreUnknownKeys = false)
+            is MuParsedExpr.Map -> {
+                val result = LinkedHashMap<Int, MuParsedExpr>()
+                for ((keyExpr, valueExpr) in value.value) {
+                    val key =
+                        muStringLike(keyExpr)
+                            ?: throw SerializationException(
+                                "Transparent wrapper keys for ${descriptor.serialName} must be strings or atoms, got $keyExpr"
+                            )
+                    if (key != field.muName) {
+                        throw SerializationException(
+                            "Unexpected Mu field '$key' for transparent wrapper ${descriptor.serialName}."
+                        )
+                    }
+                    if (result.put(field.index, valueExpr) != null) {
+                        duplicateKeyError(key)
+                    }
+                }
+                result
             }
+            else ->
+                throw SerializationException(
+                    "Transparent wrapper ${descriptor.serialName} must encode as a Mu group or map, found $value."
+                )
         }
-        else -> MuParsedExpr.Seq(listOf(atomNode(typeName), atomNode(":$polymorphicValueField"), value))
+    return byIndex[field.index]
+        ?: throw SerializationException(
+            "Transparent wrapper ${descriptor.serialName} requires a value for '${field.muName}'."
+        )
+}
+
+private fun MuTreeFormat.canDecodeWith(
+    serializer: DeserializationStrategy<Any?>,
+    node: MuParsedExpr,
+): Boolean = runCatching { decodeFromTree(serializer, node) }.isSuccess
+
+private fun MuTreeFormat.wrapPolymorphic(
+    typeName: String,
+    value: MuParsedExpr,
+    serializer: Any?,
+): MuParsedExpr {
+    transparentLayout(serializer)?.let { (descriptor, layout) ->
+        return extractTransparentPayload(descriptor, layout, value)
     }
 
-private fun MuTreeFormat.unwrapPolymorphic(node: MuParsedExpr): Pair<String, MuParsedExpr> {
+    val tag = polymorphicTag(serializer, typeName)
+    return when (value) {
+        is MuParsedExpr.Seq -> {
+            if (groupTag(value) == tag) {
+                value
+            } else {
+                MuParsedExpr.Seq(listOf(atomNode(tag), atomNode(":$polymorphicValueField"), value))
+            }
+        }
+        else -> MuParsedExpr.Seq(listOf(atomNode(tag), atomNode(":$polymorphicValueField"), value))
+    }
+}
+
+private fun MuTreeFormat.unwrapPolymorphicRaw(node: MuParsedExpr): Pair<String, MuParsedExpr> {
     if (node is MuParsedExpr.Seq) {
         val typeName =
             groupTag(node)
@@ -1178,4 +1356,43 @@ private fun MuTreeFormat.unwrapPolymorphic(node: MuParsedExpr): Pair<String, MuP
 
     val payload = explicitValue ?: MuParsedExpr.Map(flattenedEntries)
     return resolvedTypeName to payload
+}
+
+private fun MuTreeFormat.unwrapPolymorphic(
+    node: MuParsedExpr,
+    deserializer: Any?,
+): Pair<String, MuParsedExpr> {
+    val (typeName, valueNode) = unwrapPolymorphicRaw(node)
+    val subtypes = sealedSubtypeLayouts(deserializer)
+    if (subtypes.isEmpty()) {
+        return typeName to valueNode
+    }
+
+    subtypes.firstOrNull { typeName == it.serialName || typeName == it.tag }?.let { subtype ->
+        return subtype.serialName to valueNode
+    }
+
+    val transparentMatches =
+        subtypes.mapNotNull { subtype ->
+            val layout = subtype.transparentLayout ?: return@mapNotNull null
+            val wrapperNode = transparentWrapperNode(layout, node)
+            if (canDecodeWith(subtype.serializer, wrapperNode)) {
+                subtype to wrapperNode
+            } else {
+                null
+            }
+        }
+
+    if (transparentMatches.size > 1) {
+        val candidates = transparentMatches.joinToString { it.first.serialName }
+        throw SerializationException(
+            "Ambiguous @Mu.Transparent match for Mu value $node among [$candidates]."
+        )
+    }
+
+    transparentMatches.singleOrNull()?.let { (subtype, wrapperNode) ->
+        return subtype.serialName to wrapperNode
+    }
+
+    return typeName to valueNode
 }

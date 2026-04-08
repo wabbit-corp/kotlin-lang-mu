@@ -73,7 +73,7 @@ data class WeirdKey(@SerialName("display name") val displayName: String)
 @Serializable
 @Mu.Tag("custom-app")
 data class CustomApp(
-    @Mu.Name("display-name") val displayName: String,
+    @param:Mu.Name("display-name") val displayName: String,
     val age: Int,
 )
 
@@ -81,9 +81,9 @@ data class CustomApp(
 @Mu.Tag("variadic-cfg")
 data class VariadicCfg(
     val name: String,
-    @Mu.ZeroOrMore val tags: List<String> = emptyList(),
-    @Mu.OneOrMore val features: List<String>,
-    @Mu.Optional val nickname: String? = null,
+    @param:Mu.ZeroOrMore val tags: List<String> = emptyList(),
+    @param:Mu.OneOrMore val features: List<String>,
+    @param:Mu.Optional val nickname: String? = null,
 )
 
 @Serializable
@@ -121,6 +121,24 @@ sealed class Command {
 
     @Serializable @SerialName("include") data class Include(val path: String) : Command()
 }
+
+@Serializable
+sealed interface Form {
+    @Serializable @SerialName("include") data class Include(val path: String) : Form
+
+    @Serializable @Mu.Transparent data class FooBarForm(val value: FooBar) : Form
+}
+
+@Serializable
+sealed interface FooBar {
+    @Serializable @SerialName("foo") data object Foo : FooBar
+
+    @Serializable @SerialName("bar") data class Bar(val i: Int) : FooBar
+}
+
+@Serializable
+@Mu.Tag("form-bundle")
+data class FormBundle(@param:Mu.ZeroOrMore val forms: List<Form>)
 
 @Serializable abstract class Shape
 
@@ -365,6 +383,63 @@ class MuTreeFormatSpec {
             ),
             commands,
         )
+    }
+
+    @Test
+    fun `transparent wrappers collapse to inner form syntax`() {
+        val foo: Form = Form.FooBarForm(FooBar.Foo)
+        val bar: Form = Form.FooBarForm(FooBar.Bar(1))
+
+        assertTreeEquals("""(foo)""", MuTrees.encodeToTree<Form>(foo))
+        assertTreeEquals("""(bar 1)""", MuTrees.encodeToTree<Form>(bar))
+
+        assertEquals(foo, MuTrees.decodeFromTree<Form>(parseOne("""(foo)""")))
+        assertEquals(bar, MuTrees.decodeFromTree<Form>(parseOne("""(bar 1)""")))
+    }
+
+    @Test
+    fun `transparent wrappers keep explicit wrapper syntax for concrete serialization`() {
+        val value = Form.FooBarForm(FooBar.Foo)
+
+        assertTreeEquals("""(foo-bar-form (foo))""", MuTrees.encodeToTree(value))
+        assertEquals(value, MuTrees.decodeFromTree<Form>(parseOne("""(foo-bar-form (foo))""")))
+    }
+
+    @Test
+    fun `decode many from string supports transparent sealed wrappers`() {
+        val source =
+            """
+            (include "foo")
+            (foo)
+            (bar 1)
+            """.trimIndent()
+
+        val forms = MuTrees.decodeManyFromString<Form>(source)
+
+        assertEquals(
+            listOf(
+                Form.Include("foo"),
+                Form.FooBarForm(FooBar.Foo),
+                Form.FooBarForm(FooBar.Bar(1)),
+            ),
+            forms,
+        )
+    }
+
+    @Test
+    fun `transparent wrappers work inside variadic fields`() {
+        val value =
+            FormBundle(
+                listOf(
+                    Form.Include("defs.mu"),
+                    Form.FooBarForm(FooBar.Foo),
+                    Form.FooBarForm(FooBar.Bar(2)),
+                )
+            )
+
+        val tree = MuTrees.encodeToTree(value)
+        assertTreeEquals("""(form-bundle (include "defs.mu") (foo) (bar 2))""", tree)
+        assertEquals(value, MuTrees.decodeFromTree<FormBundle>(tree))
     }
 
     @Test
