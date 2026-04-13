@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Wabbit-Public-Test-License-1.1
+
 @file:OptIn(InternalMuApi::class)
 
 package one.wabbit.mu
@@ -17,19 +19,19 @@ import one.wabbit.mu.types.MuType
 import one.wabbit.mu.types.TypeVariable
 
 class MuStdContextSpec {
-    object BasicTestModule {
-        @Mu.Export("PI") @Mu.Const val piValue = 3.14
-
-        @Mu.Export var counter = 100
-
-        @Mu.Export fun greet(name: String): String = "Hello, $name!"
-
-        @Mu.Export("addInts") fun add(a: Int, b: Int): Int = a + b
-    }
-
     @Test
     fun `register basic module`() {
-        val context = MuStdContext.empty().withNativeModule("basic", BasicTestModule)
+        val basicTestModule =
+            object {
+                @Mu.Export("PI") @Mu.Const val piValue = 3.14
+
+                @Mu.Export var counter = 100
+
+                @Mu.Export fun greet(name: String): String = "Hello, $name!"
+
+                @Mu.Export("addInts") fun add(a: Int, b: Int): Int = a + b
+            }
+        val context = MuStdContext.empty().withNativeModule("basic", basicTestModule)
 
         // Check module registration
         assertTrue(context.modules.containsKey("basic"))

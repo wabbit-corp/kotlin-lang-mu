@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package one.wabbit.mu.runtime
 
 import java.io.File
@@ -12,6 +14,7 @@ import kotlin.reflect.KProperty
 import kotlin.reflect.full.createType
 import kotlin.reflect.full.primaryConstructor
 import kotlin.reflect.jvm.isAccessible
+import kotlin.reflect.jvm.jvmErasure
 import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.PersistentMap
@@ -227,6 +230,7 @@ fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: KCallable
 
             var contextArg: Boolean = false
             val parameters = mutableListOf<Arg<MuStdValue>>()
+            val runtimeValueParameters = mutableListOf<KParameter>()
             val implicits = mutableListOf<MuType.Constructor>()
             for (paramIndex in member.parameters.indices) {
                 val p = member.parameters[paramIndex]
@@ -285,6 +289,7 @@ fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: KCallable
                 }
 
                 parameters.add(Arg(name!!, isQuoted, arity, type))
+                runtimeValueParameters.add(p)
             }
 
             // require(member.typeParameters.isEmpty()) { "Generic functions are not supported" }
@@ -305,6 +310,36 @@ fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: KCallable
                 parameters,
                 resultType,
             ) { ctx, argMap ->
+                fun coerceForJvmParameter(value: MuStdValue, parameter: KParameter): MuStdValue {
+                    val raw = value.unsafeValue ?: return value
+                    val erasure = parameter.type.jvmErasure
+                    if (erasure.isInstance(raw)) {
+                        return value
+                    }
+
+                    val coerced =
+                        when (raw) {
+                            is MuLiteralInt ->
+                                when (erasure) {
+                                    Int::class -> raw.value.intValueExact()
+                                    Long::class -> raw.value.longValueExact()
+                                    BigInteger::class -> raw.value
+                                    Double::class -> raw.value.toDouble()
+                                    else -> return value
+                                }
+
+                            is MuLiteralString ->
+                                when (erasure) {
+                                    String::class -> raw.value
+                                    else -> return value
+                                }
+
+                            else -> return value
+                        }
+
+                    return MuStdValue.unsafeLift(coerced, value.type)
+                }
+
                 val args = mutableListOf<MuStdValue?>()
                 parameters.mapTo(args) { argMap[it.name] }
                 val state = one.wabbit.mu.types.TyperState<MuStdValue>(ctx.instances)
@@ -313,8 +348,18 @@ fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: KCallable
                     val arg = args[i]
                     val param = parameters[i]
                     if (arg == null) {
-                        if (param.arity == ArgArity.Required) {
-                            throw MissingRequiredArgumentException(exportName, param.name)
+                        when (param.arity) {
+                            ArgArity.Required -> {
+                                throw MissingRequiredArgumentException(exportName, param.name)
+                            }
+
+                            ArgArity.ZeroOrMore -> {
+                                args[i] = MuStdValue.unsafeLift(emptyList<Any?>(), param.type)
+                            }
+
+                            ArgArity.Optional,
+                            ArgArity.OneOrMore,
+                            -> Unit
                         }
                     } else {
                         try {
@@ -346,6 +391,8 @@ fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: KCallable
                                 )
                             }
                         }
+
+                        args[i] = coerceForJvmParameter(args[i]!!, runtimeValueParameters[i])
                     }
                 }
 
@@ -367,6 +414,24 @@ fun makeValueFromMember(jvmModuleRef: Any, exportName: String, member: KCallable
                 val result =
                     try {
                         member.call(jvmModuleRef, *args.map { it?.unsafeValue }.toTypedArray())
+                    } catch (e: IllegalArgumentException) {
+                        val renderedArgs =
+                            args.mapIndexed { index, value ->
+                                val param = parameters.getOrNull(index)
+                                val runtimeType = value?.unsafeValue?.let { it::class.qualifiedName } ?: "null"
+                                val muType = value?.type?.let(TypeFormatter.default::format) ?: "null"
+                                "${param?.name ?: "#$index"}=$runtimeType<$muType>"
+                            }
+                        throw IllegalArgumentException(
+                            buildString {
+                                append("failed to invoke Mu export ")
+                                append(exportName)
+                                append(" with JVM argument types [")
+                                append(renderedArgs.joinToString(", "))
+                                append("]")
+                            },
+                            e,
+                        )
                     } catch (e: InvocationTargetException) {
                         throw e.targetException
                     }

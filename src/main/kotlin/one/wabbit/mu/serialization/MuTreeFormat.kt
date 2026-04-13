@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 @file:OptIn(ExperimentalSerializationApi::class)
 
 package one.wabbit.mu.serialization

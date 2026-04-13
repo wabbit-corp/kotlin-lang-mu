@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package one.wabbit.mu.runtime
 
 import java.math.BigInteger
@@ -175,7 +177,9 @@ fun <Context, Value> evaluateMu(
                     }
 
                     ArgArity.ZeroOrMore -> {
-                        argValues[arg.name] = tc.liftList(ctx, values)
+                        if (values.isNotEmpty()) {
+                            argValues[arg.name] = tc.liftList(ctx, values)
+                        }
                     }
 
                     ArgArity.OneOrMore -> {

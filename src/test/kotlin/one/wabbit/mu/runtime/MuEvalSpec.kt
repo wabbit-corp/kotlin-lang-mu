@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: LicenseRef-Wabbit-Public-Test-License-1.1
+
 package one.wabbit.mu.runtime
 
 import java.math.BigInteger
+import com.ionspin.kotlin.bignum.integer.BigInteger as KmpBigInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -14,6 +17,8 @@ import one.wabbit.mu.types.MuLiteralInt
 import one.wabbit.mu.types.MuLiteralString
 import one.wabbit.mu.types.MuType
 import one.wabbit.mu.types.Upcast
+
+private fun BigInteger.toKmpBigInteger(): KmpBigInteger = KmpBigInteger.parseString(toString())
 
 interface NumericCast<A, B> {
     fun upcast(value: A): B
@@ -73,6 +78,9 @@ class BuiltinsModule {
     @Mu.Export("list")
     fun <A> makeListBuiltin(@Mu.Name("key") @Mu.ZeroOrMore values: List<A>): List<A> = values
 
+    @Mu.Export("typed-string-list")
+    fun typedStringList(@Mu.Name("items") @Mu.ZeroOrMore values: List<String>): List<String> = values
+
     @Mu.Export("map-of")
     fun <A, B> makeMap(@Mu.Name("key") @Mu.ZeroOrMore values: List<Pair<A, B>>): Map<A, B> =
         values.toMap()
@@ -99,7 +107,7 @@ class BuiltinsModule {
     @Mu.Instance
     val castBigIntegerToRational =
         object : NumericCast<BigInteger, Rational> {
-            override fun upcast(a: BigInteger): Rational = Rational.from(a)
+            override fun upcast(a: BigInteger): Rational = Rational.from(a.toKmpBigInteger())
         }
 
     @Mu.Instance
@@ -205,7 +213,8 @@ class BuiltinsModule {
     @Mu.Instance val upcastIntToDouble = Upcast.of<Int, Double> { it.toDouble() }
 
     @Mu.Instance
-    val upcastBigIntegerToRational = Upcast.of<BigInteger, Rational> { Rational.from(it) }
+    val upcastBigIntegerToRational =
+        Upcast.of<BigInteger, Rational> { Rational.from(it.toKmpBigInteger()) }
 
     // Already exists via NumericCast, ensure consistency or use one system
     @Mu.Instance val upcastBigIntegerToDouble = Upcast.of<BigInteger, Double> { it.toDouble() }
@@ -603,9 +612,17 @@ class MuEvalSpec {
             assertEval(
                 ctx,
                 "(list-of)",
-                MuType.List(MuType.Nothing),
+                MuType.List(MuType.Use(one.wabbit.mu.types.TypeVariable("A"))),
                 emptyList<Any?>(),
                 "Empty list-of",
+            )
+        ctx =
+            assertEval(
+                ctx,
+                "(typed-string-list)",
+                MuType.List(MuType.String),
+                emptyList<String>(),
+                "Empty typed string list",
             )
         // set-of
         ctx =
@@ -624,7 +641,7 @@ class MuEvalSpec {
             assertEval(
                 ctx,
                 "(set-of)",
-                MuType.Set(MuType.Nothing),
+                MuType.Set(MuType.Use(one.wabbit.mu.types.TypeVariable("A"))),
                 emptySet<Any?>(),
                 "Empty set-of",
             )
